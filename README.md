@@ -3,6 +3,10 @@
 ## clean-vpn: эксплуатация, транспорты и быстрый старт
 
 **На личной паре Radxa↔VPS включён native C++ `combo-tls` с автозапуском.**
+[Исправление управления Radxa 31 октября](scripts/clean-vpn-native-admin-repair-20261031.md):
+сохранение, stop/start и отключение kill switch проверены через настоящий broker;
+guard off возвращает прямой USB DNS/HTTPS. UI показывает установленный транспорт;
+переключение транспорта через dropdown пока не реализовано.
 [Текущее состояние, команды и результаты 31 октября](scripts/clean-vpn-native-combo-daily-20261031.md):
 реальный USB HTTPS/DNS, профиль/observer, `personal-cert.internal`, SIGKILL recovery и reboot.
 [Внешний туннель поддерживает HTTP/2 и HTTP/1.1](scripts/clean-vpn-native-http1.md)
@@ -38,9 +42,17 @@ Boring-tls остаётся packet-веткой combo и отдельным ва
   под musl, проверенная arm64-версия. Размер runtime около 104 MiB. Также прошли
   [amd64 сборка и native-тесты в офлайн VM](scripts/clean-vpn-native-amd64-build-lab.md);
   полный amd64 Compose/lifecycle ещё не проверен.
+- [OpenWrt SDK](scripts/clean-vpn-openwrt-sdk-20261031.md): локальные engine-only
+  APK x86_64/ARM64, normal TUN H1/H2, PSK и procd recovery проверены в VM.
+  LuCI и production network/DNS adapter ещё требуют отдельной реализации.
 
-[Ход текущей ночной работы](scripts/clean-vpn-native-night-20261030.md).
-[Сводный отчёт и оставшиеся границы](scripts/clean-vpn-native-night-20261030-report.md).
+[Текущая очередь 31 октября](scripts/clean-vpn-native-night-20261031.md) и
+[результат ночной работы](scripts/clean-vpn-native-night-20261031-report.md):
+диагностика, bounded HTTP-профиль, evidence UI, два 30-минутных soak,
+managed Compose/Alpine и OpenWrt VM. Новые native artifacts проверяются отдельно
+от рабочей пары и не считаются установленными на ней.
+Предыдущие: [очередь 30 октября](scripts/clean-vpn-native-night-20261030.md),
+[отчёт 30 октября](scripts/clean-vpn-native-night-20261030-report.md).
 История: [изолированная матрица boring/combo H1/H2 и transparent](scripts/clean-vpn-native-physical-features-20261030.md),
 [DNS/TCP framing](scripts/clean-vpn-native-dns-tcp-20261030.md),
 [восстановление EXT4 и neutral certificate candidate](scripts/clean-vpn-native-trial-blocker-20261030.md),

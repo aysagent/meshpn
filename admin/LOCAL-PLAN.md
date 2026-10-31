@@ -1,5 +1,17 @@
 # Native continuation, 2026-10-28
 
+Current continuation, **2026-10-31**: the dated checkpoints below are historical.
+Native combo autostart is installed on the personal Radxa/VPS pair; see the
+[current physical state](../scripts/clean-vpn-native-combo-daily-20261031.md).
+The later [broker sandbox repair](../scripts/clean-vpn-native-admin-repair-20261031.md)
+is installed and physically checked: save/stop/start and guard off/direct USB
+DNS/HTTPS work. Transport switching in the UI remains unimplemented; the label
+now reflects the actual configuration. New native/profile/UI work is tracked in
+[the 31 October queue](../scripts/clean-vpn-native-night-20261031.md) and
+[its report](../scripts/clean-vpn-native-night-20261031-report.md), with separate
+artifact hashes and lab/physical boundaries. Follow those links for the current
+step; do not restart the old legacy-migration work from this historical list.
+
 The user subsequently made Radxa available and authorized physical checks.
 Temporary checks on Radxa/VPS are recorded in the
 [binary-update acceptance report](../scripts/clean-vpn-native-update-report.md).

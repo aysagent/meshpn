@@ -17,6 +17,10 @@ builder ID/versions, ELF headers и VM cleanup сохранены отдельн
 Артефакты также сохранены локально в игнорируемом Git каталоге
 `native/clean_vpn/build/openwrt-20261031/{amd64,arm64}/` вместе с manifests.
 В Git идут исходники/receipts; бинарники в публичный feed не отправлялись.
+Подкаталог `lab/` сохраняет public image/kernel, TUN module/index, lab helper и
+профиль с SHA в `inputs.json`: следующий VM smoke не требует повторной SDK
+компиляции. PSK и private keys туда не копировались; payload helper каждый раз
+генерирует новые test credentials. QEMU images и SDK volumes оставлены в cache.
 
 ## Что проверено
 

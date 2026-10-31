@@ -40,11 +40,14 @@
    4 клиента, 14106 rounds, quota isolation, restart-free и cleanup.
    Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
-8. **Начат резерв:** [реальная OpenWrt VM](clean-vpn-openwrt-vm.md),
-   procd/UCI/respawn/stop, без NIC; 8 gates + два безопасных preflight теста.
+8. **Выполнен foundation резерв:** [реальные OpenWrt VM](clean-vpn-openwrt-vm.md),
+   x86/64 + ARMv8, procd/UCI/respawn/stop, без NIC; 5 безопасных preflight tests.
    Дополнительно [static amd64 native внутри OpenWrt](clean-vpn-openwrt-native.md):
    H1/H2/PSK через FD; до этого CTest 14/14 и 64/64 в отдельной amd64 VM.
-   SDK packages/LuCI/native network acceptance ещё не выполнены.
+   **Готовы [engine-only SDK APK](clean-vpn-openwrt-sdk-20261031.md)** обеих
+   архитектур: actual installed SHA, normal TUN H1/H2, wrong PSK, route/stop
+   negatives и native procd SIGKILL/respawn/stop. Это не FD fixture.
+   WAN/DNS/network ownership/reboot и LuCI acceptance ещё не выполнены.
    Резерв: первые локально устанавливаемые OpenWrt packages/UCI/procd/LuCI и
    виртуальная приёмка. Физические роутеры не трогать; не обещать полную LuCI
    функциональность по одному прототипу.
