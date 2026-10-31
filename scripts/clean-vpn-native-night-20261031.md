@@ -14,7 +14,8 @@
    включёнными combo и защитой; VPS не перезапускался.
 2. **Готово:** [30 минут на точном daily binary](clean-vpn-native-daily-soak-20261031.md),
    четыре клиента, 14073 mixed rounds, quota isolation и cleanup.
-   Следующее — netem/crash на отдельном runtime; новые бинарники не ставить в daily.
+   **Готово:** [netem/crash на diagnostic runtime](clean-vpn-native-netem-20261031.md),
+   delay/loss/reorder/blackout, обе ветки и SIGKILL/recreate; daily не затронут.
 3. **Готово локально:** [диагностика relay/packet/H2/DNS](clean-vpn-native-diagnostics.md),
    typed counters и строгие readers, CTest 14/14, H1/H2/service 3/3, Linux controllers 49/49. Никакого
    вывода «исправлено» по одному успешному повтору. Отдельно TLS без SNI сейчас
