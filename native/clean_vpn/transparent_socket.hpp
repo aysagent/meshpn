@@ -156,7 +156,11 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
     if (eof_right && to_left.empty() && !shut_left) {
       require(shutdown(left.fd, SHUT_WR) == 0, "relay_shutdown"); shut_left = true;
     }
-    if (shut_left && shut_right) return;
+    if (shut_left && shut_right) {
+      // Drain first, then account for an incomplete handshake. In particular,
+      // a complete TLS alert must not be lost merely to record this failure.
+      require(gate.opaque(),"relay_handshake_eof"); return;
+    }
     pollfd p[2] = {{left.fd, 0, 0}, {right.fd, 0, 0}};
     if (!eof_left && to_right.size() <= RelayLimits::queue_bytes - reserve) p[0].events |= POLLIN;
     if (!eof_right && to_left.size() <= RelayLimits::queue_bytes - reserve) p[1].events |= POLLIN;

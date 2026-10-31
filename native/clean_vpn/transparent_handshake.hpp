@@ -149,7 +149,12 @@ public:
   void end(Direction direction) {
     const auto& s = direction == Direction::client ? client_ : server_;
     require(!failed_, "relay_failed");
-    if (!s.record.empty() || !s.hello_wire.empty() || !opaque()) {
+    // FIN closes only this TCP direction. A complete ClientHello followed by
+    // FIN must still drain to the origin and allow its reverse server flight;
+    // an origin's complete fatal alert must likewise reach the application.
+    // End-to-end TLS validates handshake completion. The relay still rejects
+    // truncated records and keeps its absolute handshake/drain deadlines.
+    if (!s.record.empty() || !s.hello_wire.empty()) {
       failed_ = true; throw std::runtime_error("relay_handshake_eof");
     }
   }

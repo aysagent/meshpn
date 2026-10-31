@@ -239,6 +239,17 @@ static void units() {
   }
   const Bytes ccs = {20,3,3,0,1,1}, early = {23,3,3,0,3,0xaa,0xbb,0xcc};
   const auto hrr = server_hello(true), final = server_hello(false);
+  // Match the JS relay's independent FIN directions before ServerHello.
+  // A clean record boundary is not proof of TLS success, but is not truncation.
+  {
+    HandshakeGate g(first,relay,0); g.end(Direction::client);
+    need(feed(g,Direction::server,final)==final);
+    need(feed(g,Direction::server,early)==early); g.end(Direction::server);
+    HandshakeGate alert(first,relay,0); const Bytes fatal={21,3,3,0,2,2,40};
+    need(feed(alert,Direction::server,fatal)==fatal);alert.end(Direction::server);
+    alert.end(Direction::client);
+    rejected([&]{alert.check_timeout(10000);});
+  }
   HandshakeGate client(first, relay, 0);
   HandshakeGate exit(parse(replace(first, relay)), first.sni, 0);
   need(feed(client, Direction::client, early) == early);

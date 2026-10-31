@@ -1,6 +1,6 @@
 // Real TCP workers and admission, with a raw origin to control precise faults.
 // This complements (does not replace) the certificate-verified TLS socket test.
-#include "transparent_socket.hpp"
+#include "combo.hpp"
 #include <openssl/ssl.h>
 #include <filesystem>
 #include <fstream>
@@ -144,18 +144,56 @@ static Bytes server_hello() {
   p.insert(p.end(), {0,0x13,1,0,0,6,0,43,0,2,3,4}); p[3] = p.size() - 4;
   Bytes b{22,3,3,0,uint8_t(p.size())}; b.insert(b.end(),p.begin(),p.end()); return b;
 }
+static void handshake_halfclose(const SniAuthorization& auth, const Hello& h) {
+  for (const bool combined : {false, true}) for (const bool application_fin : {true, false}) {
+    Listener origin, e, c; const auto endpoint=e.destination, client_endpoint=c.destination;
+    std::unique_ptr<RelayListener> exit;
+    std::unique_ptr<cvpn::combo::Exit> combo;
+    if(combined)combo=std::make_unique<cvpn::combo::Exit>(e.release(),auth,"relay.example",DestinationPolicy({origin.destination}),std::make_shared<ReplayWindow>());
+    else exit=std::make_unique<RelayListener>(e.release(),false,auth,Destination{},Destination{},DestinationPolicy({origin.destination}));
+    RelayListener client(c.release(),true,auth,origin.destination,endpoint,DestinationPolicy({origin.destination}));
+    RelaySocket app(connect_to(client_endpoint)); send_all(app.fd,h.wire);
+    if(application_fin)need(shutdown(app.fd,SHUT_WR)==0);
+    RelaySocket peer; until([&]{
+      if(client.failed)throw std::runtime_error("pre_serverhello_fin_"+client.last_failure());
+      peer.fd=accept4(origin.socket.fd,nullptr,nullptr,SOCK_CLOEXEC|SOCK_NONBLOCK);return peer.fd>=0;});
+    const std::atomic<bool> stop{false};
+    need(socket_hello(peer.fd,monotonic_ms()+2000,stop).hello.wire==h.wire);
+    // A TCP FIN closes one direction, even before ServerHello. It must not
+    // discard the complete queued ClientHello or the reverse server flight.
+    if(application_fin)closed(peer.fd);
+    Bytes response=application_fin?server_hello():Bytes{21,3,3,0,2,2,40};
+    if(application_fin)response.insert(response.end(),{23,3,3,0,3,0xaa,0xbb,0xcc});
+    send_all(peer.fd,response); need(shutdown(peer.fd,SHUT_WR)==0);
+    Bytes got; until([&]{uint8_t b[4096];const auto n=recv(app.fd,b,sizeof(b),0);
+      if(n>0){got.insert(got.end(),b,b+n);need(got.size()<=response.size());return false;}
+      need(n==0||(n<0&&(errno==EAGAIN||errno==EINTR)));return n==0;});
+    need(got==response);
+    if(!application_fin)need(shutdown(app.fd,SHUT_WR)==0);
+    if(application_fin){
+      until([&]{return client.completed==1&&(combined?(combo->relay_selected==1&&combo->active_relays()==0&&combo->pending()==0):exit->completed==1);});
+      need(client.failed==0&&(combined?combo->rejected==0:exit->failed==0));
+    }else{
+      until([&]{return client.failed==1&&(combined?(combo->rejected==1&&combo->active_relays()==0&&combo->pending()==0):exit->failed==1);});
+      need(client.completed==0&&(combined?combo->boring_selected==0:exit->completed==0));
+    }
+    need(!client.broken&&!(combined?combo->broken.load():exit->broken.load()));
+  }
+  std::cout<<"FAULT_PASS=pre_serverhello_halfclose_and_fatal_alert_preserved_transparent_and_combo_two_hops\n";
+}
 static void deadlines(const SniAuthorization& auth, const Hello& h) {
-  for (const std::string mode : {"idle", "drain", "lifetime", "handshake"}) {
+  for (const std::string mode : {"idle", "drain", "handshake-drain", "lifetime", "handshake"}) {
     Listener origin, e; const auto endpoint = e.destination; RelayLimits limits;
     if (mode == "idle") limits.idle_ms = 200;
-    if (mode == "drain") limits.drain_ms = 200;
+    if (mode == "drain" || mode == "handshake-drain") limits.drain_ms = 200;
     if (mode == "lifetime") limits.lifetime_ms = 300;
     RelayListener exit(e.release(), false, auth, {}, {}, DestinationPolicy({origin.destination}), limits);
     RelaySocket app(connect_to(endpoint)); send_all(app.fd, auth.seal(h,origin.destination,wall_seconds()));
     RelaySocket peer(origin.accept()); const std::atomic<bool> stop{false};
     need(socket_hello(peer.fd,monotonic_ms() + 2000,stop).hello.wire == h.wire);
-    if (mode != "handshake") { send_all(peer.fd,server_hello()); uint8_t b[128]; until([&] { return recv(app.fd,b,sizeof(b),0) > 0; }); }
-    if (mode == "drain") { need(shutdown(app.fd,SHUT_WR) == 0); closed(peer.fd); }
+    const bool before_server_hello=mode=="handshake"||mode=="handshake-drain";
+    if (!before_server_hello) { send_all(peer.fd,server_hello()); uint8_t b[128]; until([&] { return recv(app.fd,b,sizeof(b),0) > 0; }); }
+    if (mode == "drain" || mode == "handshake-drain") { need(shutdown(app.fd,SHUT_WR) == 0); closed(peer.fd); }
     const auto start = monotonic_ms();
     until([&] {
       if (mode == "handshake" || mode == "lifetime") {
@@ -165,8 +203,8 @@ static void deadlines(const SniAuthorization& auth, const Hello& h) {
       }
       return exit.failed == 1;
     }, mode == "handshake" ? 12000 : 2000);
-    need(exit.last_failure() == "relay_"+mode+"_timeout");
-    const auto diagnostic=exit.diagnostics.snapshot();const auto phase=mode=="handshake"?RelayPhase::tls_prefix:RelayPhase::stream;
+    need(exit.last_failure() == "relay_"+(mode=="handshake-drain"?"drain":mode)+"_timeout");
+    const auto diagnostic=exit.diagnostics.snapshot();const auto phase=before_server_hello?RelayPhase::tls_prefix:RelayPhase::stream;
     need(diagnostic.last_phase==phase&&diagnostic.phases[size_t(phase)]==1);
     if (mode == "handshake") need(monotonic_ms() - start >= 9500);
     closed(app.fd); closed(peer.fd); need(!exit.broken);
@@ -177,7 +215,7 @@ int main() {
   try {
     Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret,"relay.example"); const auto h = parse(hello());
     const auto fds = entries("/proc/self/fd"), threads = entries("/proc/self/task");
-    fragments(auth,h); churn(auth,h); deadlines(auth,h);
+    handshake_halfclose(auth,h); fragments(auth,h); churn(auth,h); deadlines(auth,h);
     need(entries("/proc/self/fd") == fds && entries("/proc/self/task") == threads);
     std::cout << "FAULT_PASS=all_owners_released\n";
   } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }

@@ -1,5 +1,13 @@
 # Native continuation, 2026-10-28
 
+Latest native repair, **2026-11-01**: [pre-ServerHello FIN handling](../scripts/clean-vpn-native-prehello-fin-20261101.md).
+The new real TCP regression fails on the old code and passes on the candidate
+for transparent and combo. CTest 14/14 and real TLS/replay/socket tests pass.
+Five recorded phone hellos with fresh native authorization reach ServerHello
+in 10/10 physical controls. This does not explain the original phone timeout;
+its first FIN came from Radxa after 10 s, not from the application first.
+The user explicitly asked to finish analysis/fixes without another phone retest.
+
 Latest investigation, **2026-11-01**: [iPhone USB/WAN and JS/native comparison](../scripts/clean-vpn-native-iphone-investigation-20261101.md).
 Phone acceptance remains open. For 182 captured pairs the JS rebuild with the
 same SNI matches native byte for byte; later read/peek and wire probes no longer

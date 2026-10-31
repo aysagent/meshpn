@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-pre-serverhello-halfclose",
+  "date": "2026-11-01",
+  "automaticFallbackAdded": false,
+  "wireFormatChanged": false,
+  "originalIphoneFailureResolved": false,
+  "before": {
+    "regression": "full original ClientHello plus TCP SHUT_WR before ServerHello",
+    "result": "pre_serverhello_fin_relay_handshake_eof",
+    "originConnectionReached": false
+  },
+  "after": {
+    "twoHopCases": 4,
+    "exitModes": [
+      "transparent-tls",
+      "combo-tls"
+    ],
+    "cases": [
+      "application half-close retains full ClientHello and reverse server flight",
+      "fatal alert and EOF drain before recording incomplete handshake"
+    ],
+    "faultSuite": {
+      "fragmentLayouts": 9,
+      "churnRounds": 128,
+      "slotReclamation": 16,
+      "fdBaseline": 6,
+      "threadBaseline": 2,
+      "allOwnersReleased": true,
+      "deadlines": [
+        "idle",
+        "drain",
+        "pre-serverhello drain",
+        "lifetime",
+        "handshake"
+      ]
+    },
+    "ctestPassed": 14,
+    "ctestTotal": 14,
+    "certificateVerifiedTlsCombinations": 12,
+    "fullAndResumed": true,
+    "socketEchoBytes": 2097152,
+    "slowConsumerBytes": 8388608
+  },
+  "physicalCapturedPhoneHellos": {
+    "helper": "diagnostic only; native SniAuthorization and HandshakeGate from installed source; no production config or engine replacement",
+    "exitPort": 443,
+    "samples": 5,
+    "attempts": [
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 239,
+        "nodelay": true,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 176,
+        "nodelay": false,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 177,
+        "nodelay": true,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 181,
+        "nodelay": false,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 174,
+        "nodelay": true,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1672,
+        "maskedBytes": 1671,
+        "ms": 178,
+        "nodelay": false,
+        "origin": "www.speedtest.net",
+        "originalBytes": 1540,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1671
+      },
+      {
+        "bytesAcked": 1664,
+        "maskedBytes": 1663,
+        "ms": 182,
+        "nodelay": true,
+        "origin": "example.org",
+        "originalBytes": 1534,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1663
+      },
+      {
+        "bytesAcked": 1664,
+        "maskedBytes": 1663,
+        "ms": 176,
+        "nodelay": false,
+        "origin": "example.org",
+        "originalBytes": 1534,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1663
+      },
+      {
+        "bytesAcked": 1664,
+        "maskedBytes": 1663,
+        "ms": 180,
+        "nodelay": true,
+        "origin": "example.org",
+        "originalBytes": 1534,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1663
+      },
+      {
+        "bytesAcked": 1664,
+        "maskedBytes": 1663,
+        "ms": 176,
+        "nodelay": false,
+        "origin": "example.org",
+        "originalBytes": 1534,
+        "received": 1215,
+        "result": "ServerHello",
+        "sent": 1663
+      }
+    ],
+    "scope": "Initial Safari ClientHello -> fresh native authorization -> existing exit -> original IP -> first ServerHello. TLS cannot finish without the original phone ephemeral private keys.",
+    "causesExcludedInThisRun": [
+      "stable parser failure on these recorded hellos",
+      "stable original-destination connection failure on their original IPs",
+      "consistent NODELAY-dependent failure"
+    ],
+    "iphoneAcceptance": false
+  },
+  "recordedFirstIphoneSpeedtestFailure": {
+    "applicationFinBeforeServerHello": false,
+    "firstFinFromRadxaToApplicationSeconds": 10.027,
+    "wanReceivedTlsBytes": 0,
+    "relationToFix": "This first recorded timeout is not explained by the reproduced early application FIN defect."
+  },
+  "deployment": "candidate passed isolated lab; physical engine replacement not yet performed"
+}
