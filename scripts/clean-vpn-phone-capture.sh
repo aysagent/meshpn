@@ -5,6 +5,24 @@ umask 077
 BASE=/var/lib/clean-vpn-phone-capture
 UNIT=clean-vpn-phone-capture-resume
 UNITFILE=/etc/systemd/system/clean-vpn-phone-capture-resume.service
+# Persist the resume budget before acknowledging it, including across USB power loss.
+atomic_value() {
+  python3 - "$1" "$2" <<'PYATOMIC'
+import os,sys,tempfile
+path,value=sys.argv[1:]
+directory=os.path.dirname(path)
+fd,tmp=tempfile.mkstemp(prefix='.capture-',dir=directory)
+try:
+ with os.fdopen(fd,'w') as f:
+  os.fchmod(f.fileno(),0o600);f.write(value+'\n');f.flush();os.fsync(f.fileno())
+ os.replace(tmp,path)
+ d=os.open(directory,os.O_DIRECTORY)
+ try:os.fsync(d)
+ finally:os.close(d)
+finally:
+ if os.path.exists(tmp):os.unlink(tmp)
+PYATOMIC
+}
 usage() { echo "Usage: sudo bash $0 start [seconds:60..1800] | status | stop"; }
 [[ ${EUID} == 0 ]] || { echo 'Linux root required' >&2; exit 1; }
 [[ $(uname -s) == Linux ]] || { echo 'Linux required' >&2; exit 1; }
@@ -14,7 +32,7 @@ start)
   [[ $# -le 2 ]] || { usage; exit 1; }
   seconds=${2:-900}
   [[ $seconds =~ ^[0-9]{2,4}$ ]] && ((10#$seconds >= 60 && 10#$seconds <= 1800)) || { usage; exit 1; }
-  for tool in systemd-run systemctl tcpdump ip iptables-save timeout journalctl; do command -v "$tool" >/dev/null; done
+  for tool in python3 systemctl tcpdump ip iptables-save journalctl; do command -v "$tool" >/dev/null; done
   ip link show usb0 >/dev/null
   state=$(systemctl show "$UNIT.service" -p ActiveState --value 2>/dev/null || true)
   [[ $state != active && $state != activating && $state != deactivating ]] || { echo 'Capture already running'; exit 1; }
@@ -22,9 +40,9 @@ start)
   directory=$(mktemp -d "$BASE/run-XXXXXXXX")
   script=$(readlink -f "$0")
   if [[ -e $UNITFILE ]]; then grep -qx '# clean-vpn-owned-phone-capture-v1' "$UNITFILE" || { echo 'Foreign unit'; exit 1; }; fi
-  printf '%s\n' "$directory" >"$BASE/armed"
-  echo "$((10#$seconds))" >"$directory/remaining"
-  echo 0 >"$directory/boots"
+  atomic_value "$BASE/armed" "$directory"
+  atomic_value "$directory/remaining" "$((10#$seconds))"
+  atomic_value "$directory/boots" 0
   cat >"$UNITFILE" <<UNITEOF
 # clean-vpn-owned-phone-capture-v1
 [Unit]
@@ -77,7 +95,7 @@ _resume)
     systemctl disable "$UNIT.service"
     exit 0
   fi
-  echo "$((boots+1))" >"$directory/boots"
+  atomic_value "$directory/boots" "$((boots+1))"
   segment=$(mktemp -d "$directory/boot-XXXXXXXX")
   /bin/bash "$0" _record "$segment" "$seconds" "$directory/remaining"
   if [[ $(cat "$directory/remaining") == 0 ]]; then
@@ -91,6 +109,7 @@ _record)
   exec >"$directory/summary.txt" 2>&1
   echo "DIRECTORY=$directory"
   echo "STARTED=$(date -u +%FT%TZ)"
+  echo "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)"
   started=$(date +%s)
   children=()
   snapshot() {
@@ -128,11 +147,12 @@ _record)
   deadline=$((SECONDS+seconds))
   while (( SECONDS < deadline )); do
     { date -u +%FT%TZ; ip -br address; ip -s link show usb0; ip neigh show dev usb0; ss -nto; } >>"$directory/timeline.txt" 2>&1 || true
-    echo "$((deadline-SECONDS))" >"$budget"
+    remaining=$((deadline-SECONDS)); if ((remaining<0)); then remaining=0; fi
+    atomic_value "$budget" "$remaining"
     sleep 10 &
     wait $! || true
   done
-  echo 0 >"$budget"
+  atomic_value "$budget" 0
   ;;
 *) usage; exit 1;;
 esac
