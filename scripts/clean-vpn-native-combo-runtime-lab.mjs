@@ -22,6 +22,9 @@ const activeHealth=process.env.CVPN_COMBO_HEALTH==='1';
 assert.ok(process.env.CVPN_COMBO_HEALTH===undefined||activeHealth);
 const netem=process.env.CVPN_COMBO_NETEM==='1';
 assert.ok(process.env.CVPN_COMBO_NETEM===undefined||netem,'CVPN_COMBO_NETEM_must_be_1');
+const profilePath=process.env.CVPN_COMBO_PROFILE??'fixtures/native-tls-profiles/chromium-156-bounded-cold.json';
+const profileStat=fs.lstatSync(profilePath);assert.ok(profileStat.isFile()&&!profileStat.isSymbolicLink()&&profileStat.size<=16384,'bounded_profile_file');
+const profileBytes=fs.readFileSync(profilePath),profile=JSON.parse(profileBytes);
 const seconds=Number(process.env.CVPN_COMBO_LOAD_SECONDS??60);assert.ok(Number.isInteger(seconds)&&seconds>=30&&seconds<=1800);
 const reportPath=path.resolve(process.argv[2]??'');assert.ok(process.argv.length===3&&!fs.existsSync(reportPath));
 const lifetime=String(seconds+1800);
@@ -33,7 +36,7 @@ const p=a=>execFileSync(cli[0],[...cli.slice(1),...a],options).trim();
 const pa=async (a,extra={})=>(await promisify(execFile)(cli[0],[...cli.slice(1),...a],{...options,...extra})).stdout.trim();
 const logs=n=>{const r=spawnSync(cli[0],[...cli.slice(1),'logs',n],options);assert.equal(r.status,0);return r.stdout+r.stderr;};
 const e=(n,...a)=>p(['exec',n,...a]);
-const checks=[],report={schema:1,kind:'native-combo-container-lifecycle',status:'failed',image,port:3443,checks,scope:'internal-Linux-container-lab-only'};
+const checks=[],report={schema:1,kind:'native-combo-container-lifecycle',status:'failed',image,port:3443,profileSha256:createHash('sha256').update(profileBytes).digest('hex'),checks,scope:'internal-Linux-container-lab-only'};
 const step=s=>{checks.push(s);console.log('COMBO_RUNTIME='+s);};
 const wait=async (fn,ms=25000)=>{let error;const end=performance.now()+ms;while(performance.now()<end){try{return fn();}catch(e){error=e;await delay(250);}}throw error;};
 const ownership={schema:1,kind:'native-runtime-lab-ownership',prefix,cli};
@@ -83,7 +86,7 @@ try{
   e(names.init,'openssl','req','-x509','-newkey','rsa:2048','-nodes','-days','2','-subj','/CN=runtime.test','-addext','subjectAltName=DNS:runtime.test','-keyout','/config/key.pem','-out','/config/cert.pem');
   if(activeHealth)put('relay-health.json',JSON.stringify({version:1,ipv4:'11.22.33.44',server_name:'runtime.test',path:'/',ca:'/config/cert.pem',sha256:createHash('sha256').update('relay-ok\n').digest('hex')}));
   put('packet.psk',randomBytes(32));put('relay.psk',randomBytes(32));
-  put('profile.json',fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'));
+  put('profile.json',profileBytes);
   const configs={};for(const role of ['client','exit']){
     configs[role]={version:1,transport:'combo-tls',role,
       boring:{version:1,role,tun:'cvpn0',address:'10.77.0.2',port:3443,secret_path:'/config/packet.psk',
@@ -123,7 +126,7 @@ try{
   probe(packetProbe);probe(relayProbe);step('second-owner-free-port-and-netns-refused-existing-pair-healthy');
   if(observerImage){
     for(const name of ['wire','original']){p(['stop','--time=5',prefix+'-'+name]);assert.match(e(names.init,'cat','/config/'+name+'.log'),/\b0 packets dropped by kernel\b/);p(['cp',names.init+':/config/'+name+'.pcap',root+'/'+name+'.pcap']);p(['rm',prefix+'-'+name]);}
-    const wire=inspectPcap(fs.readFileSync(root+'/wire.pcap'),{destination:'10.77.0.2',port:3443,profile:JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-cold.json'))});
+    const wire=inspectPcap(fs.readFileSync(root+'/wire.pcap'),{destination:'10.77.0.2',port:3443,profile});
     const app=inspectPcap(fs.readFileSync(root+'/original.pcap'),{destination:'11.22.33.44'});
     const packet=wire.connections.filter(c=>c.sni?.includes('relay.example')),relay=wire.connections.filter(c=>c.sni?.some(n=>n.endsWith('.relay.example')));
     assert.ok(packet.length&&relay.length&&app.connections.length);

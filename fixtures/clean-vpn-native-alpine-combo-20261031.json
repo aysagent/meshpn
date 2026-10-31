@@ -1,0 +1,174 @@
+{
+  "schema": 1,
+  "kind": "native-combo-container-lifecycle",
+  "status": "passed",
+  "image": "localhost/cvpn-alpine-runtime:http-v2-20261031",
+  "port": 3443,
+  "profileSha256": "baaf251e0de975de15d1d501b2630235f3210fe15efe49e3dfcb326e72d99e2f",
+  "checks": [
+    "uninitialized-replay-start-refused-without-reset",
+    "explicit-init-and-repeat-init-refusal",
+    "public-launcher-real-TUN-DNS-and-LAN-HTTPS-relay",
+    "direct-uplink-HTTPS-blocked-LAN-relay-works",
+    "second-owner-free-port-and-netns-refused-existing-pair-healthy",
+    "independent-pcap-packet-profile-and-original-relay-JA3-JA4-match",
+    "same-namespace-reentry-preserves-foreign-rules",
+    "parallel-packet-and-four-relay-users-bounded-load-resources-reclaimed",
+    "overload-rejects-excess-relays-packet-branch-and-fresh-requests-survive",
+    "relay-failure-does-not-downgrade-to-packet-branch",
+    "relay-health-rejects-wrong-CA-hostname-and-body",
+    "active-relay-health-refuses-missing-redirect-and-blocked-origin-with-packet-healthy",
+    "recreated-exit-listens-with-original-replay-state",
+    "exit-SIGKILL-recreate-preserves-replay-and-recovers-both-paths",
+    "client-SIGKILL-held-namespace-remains-closed",
+    "fresh-client-namespace-recovers-both-paths",
+    "native-PID1-SIGTERM-clean"
+  ],
+  "scope": "internal-Linux-container-lab-only",
+  "imageId": "66b5734276ce9e74b8cdb8f1cb3a57802f5712ca6119c44da3ee38046aa491db",
+  "architecture": "arm64",
+  "engineSha256": "0c87b6e4b83b0fb4ace4e694c86637035bc8e9c72c9f88f697247136d255e273",
+  "observer": {
+    "wireSha256": "196b409853dd02bc7b72954456130924f156ac31cfa7f89fe4309c26c771e97f",
+    "applicationSha256": "f5a628710a47d70a9d73bbe0083854550aa4e2e1d3a167b87d7184bacb4aaad1",
+    "packetProfileMatches": 1,
+    "relayFingerprintMatches": 4,
+    "scope": "ClientHello-only-not-full-browser-equivalence"
+  },
+  "load": {
+    "rounds": 117,
+    "relayRequests": 468,
+    "packetBatches": 117,
+    "elapsedMs": 60072.91214,
+    "seconds": 60,
+    "samples": 155,
+    "initial": {
+      "client": {
+        "rssKiB": 5824,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 10,
+        "udpSockets": 1
+      },
+      "exit": {
+        "rssKiB": 5904,
+        "fds": 8,
+        "sockets": 2,
+        "threads": 2,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 5,
+        "udpSockets": 0
+      }
+    },
+    "peak": {
+      "client": {
+        "rssKiB": 5988,
+        "fds": 16,
+        "threads": 7
+      },
+      "exit": {
+        "rssKiB": 6152,
+        "fds": 15,
+        "threads": 6
+      }
+    },
+    "windows": {
+      "client": {
+        "firstThirdMedianRssKiB": 5824,
+        "lastThirdMedianRssKiB": 5828,
+        "growthKiB": 4
+      },
+      "exit": {
+        "firstThirdMedianRssKiB": 5936,
+        "lastThirdMedianRssKiB": 6036,
+        "growthKiB": 100
+      }
+    },
+    "settled": {
+      "client": {
+        "rssKiB": 5828,
+        "fds": 8,
+        "sockets": 4,
+        "threads": 3,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 476,
+        "udpSockets": 1
+      },
+      "exit": {
+        "rssKiB": 6040,
+        "fds": 8,
+        "sockets": 2,
+        "threads": 2,
+        "nativeProcesses": 1,
+        "namespaceProcesses": 2,
+        "zombies": 0,
+        "tcpEstablished": 1,
+        "tcpTimeWait": 455,
+        "udpSockets": 0
+      }
+    }
+  },
+  "burst": {
+    "total": 64,
+    "rejected": 48,
+    "completed": 16
+  },
+  "healthFaultStage": "origin-restored",
+  "redirectHealthRecoveryMs": 151.23487499999464,
+  "originHealthRecoveryMs": 148.2335000000021,
+  "exitRecreateMs": 3809.2802500000107,
+  "clientRecreateMs": 3423.0841669999936,
+  "cleanup": {
+    "status": "cleaned",
+    "removed": [
+      {
+        "type": "container",
+        "name": "cvpnrt-607b82680f387bb4-init"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-607b82680f387bb4-origin"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-607b82680f387bb4-app"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-607b82680f387bb4-exit"
+      },
+      {
+        "type": "container",
+        "name": "cvpnrt-607b82680f387bb4-client"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-607b82680f387bb4-config"
+      },
+      {
+        "type": "volume",
+        "name": "cvpnrt-607b82680f387bb4-replay"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-607b82680f387bb4-lan"
+      },
+      {
+        "type": "network",
+        "name": "cvpnrt-607b82680f387bb4-net"
+      }
+    ]
+  },
+  "rawReportSha256": "57db367fec0da0ed9636fd918e99387fed06a768adbfa3d3114c33042c9c4dc7"
+}

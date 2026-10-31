@@ -34,7 +34,9 @@
    Linux 28/28, включая 32 клиента/exit; [receipt](../fixtures/clean-vpn-native-enrollment-20261031.json).
    Удобство combo enrollment: add/export/import/connect/rotate/revoke, готовые
    отдельные keys/CA/profile; `.mpn` и discovery только в изолированной среде.
-7. Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
+7. **Готово локально:** [актуальные managed Compose/Alpine](clean-vpn-native-containers-20261031.md),
+   CTest 14/14, wire/enrollment 10/10, managed 12/12, combo 17/17.
+   Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
 8. Резерв: первые локально устанавливаемые OpenWrt packages/UCI/procd/LuCI и
    виртуальная приёмка. Физические роутеры не трогать; не обещать полную LuCI

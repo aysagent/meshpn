@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "kind": "native-managed-compose-lab",
+  "status": "passed",
+  "checks": [
+    "compose-pair-supervised-engines-active",
+    "authenticated-address-discovery-actual-assignment-and-immutable-source",
+    "real-tun-authenticated-packet-roundtrip",
+    "compose-private-dns-udp-tcp-nss-and-public-positive-control",
+    "compose-private-dns-transaction-servfail-without-public-fallback",
+    "client-add-revoke-reload-without-existing-client-interruption",
+    "compose-private-dns-revoke-outage-and-recovery-no-public-fallback",
+    "both-roles-http-admin-auth-diagnostics-and-verified-TLS-browser-capture",
+    "stop-retains-guard-no-packet-forwarding",
+    "stopped-engine-cannot-bypass-DNS-through-direct-port53",
+    "start-restores-packet-path",
+    "engine-sigkill-auto-recovery"
+  ],
+  "scope": "internal bridge; real namespace runtime and HTTP admin; no physical hosts or reboot",
+  "images": [
+    {
+      "name": "localhost/cvpn-managed-alpine:http-v2-20261031",
+      "id": "ffa3610e3fc21e41f78e6ebc1e5f97640ff12e96b691e069c67422fa65bb3b5a",
+      "architecture": "arm64",
+      "size": 112604053
+    },
+    {
+      "name": "localhost/cvpn-managed-web-alpine:http-20261031",
+      "id": "cd75d77d890e12708e6bb4bc6aea0d2d6501f9df40cc3b52b549b119f6954db1",
+      "architecture": "arm64",
+      "size": 78095090
+    }
+  ],
+  "cleanupErrors": [],
+  "rawReportSha256": "dae7d7ea0458c8e9fb0b78218dbdb8699d303981704b0e2f44395cfcc751ab67"
+}
