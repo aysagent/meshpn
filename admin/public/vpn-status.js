@@ -10,13 +10,21 @@ export function operationText(job,network={}){
  const phase=network?.SubState==='stop-post'?'Восстановление маршрутов и DNS':phases[job?.phase]??'Выполняется';
  return name+' — '+phase;
 }
-export function vpnStatusText(v={},job){
+export function vpnStatusText(v={},job,transport){
  if(job?.status==='running'&&['vpn-start','vpn-restart','vpn-stop','guard','vpn-settings'].includes(job.kind))return job.kind==='vpn-stop'?'Останавливается':job.kind==='vpn-restart'?'Перезапускается':'Переключение…';
  if(v.ActiveState==='deactivating')return 'Останавливается';
  const connection={ready:'Туннель подключён',idle_wait:'Включён, ожидает трафик',connecting:'Подключается',handshake:'TLS-подключение',waiting_uplink:'Ожидание Wi-Fi',connect_deadline:'Таймаут подключения; повторная попытка',h2_ping_timeout:'Связь потеряна; переподключение',h1_ping_timeout:'Связь потеряна; переподключение',tls_read:'Связь прервана; переподключение',auth_rejected:'Отказ авторизации',auth_clock_skew:'Не совпадает время клиента и exit'};
  if(v.ActiveState==='activating')return connection[v.StatusText]??'Запускается';
  if(v.ActiveState==='inactive')return 'Выключен';
  if(v.ActiveState==='failed')return 'Ошибка службы';
- if(v.ActiveState==='active')return connection[v.StatusText]??('Соединение не подтверждено'+(v.StatusText?' · '+v.StatusText:''));
+ if(v.ActiveState==='active')return v.StatusText==='ready'&&transport==='combo-tls'?'Основной туннель подключён':connection[v.StatusText]??('Соединение не подтверждено'+(v.StatusText?' · '+v.StatusText:''));
  return 'Статус недоступен';
+}
+export function relayStatusText(transport,diagnostics={}){
+ if(!['combo-tls','transparent-tls'].includes(transport))return '';
+ if(diagnostics.status!=='sampled'||!diagnostics.relay)return 'HTTPS-ветка: свежих данных пока нет';
+ const r=diagnostics.relay;
+ if(r.broken===true)return 'HTTPS-ветка: ошибка обработчика';
+ const count=k=>Number.isSafeInteger(r[k])&&r[k]>=0?r[k]:'—';
+ return `HTTPS-ветка: активных ${count('active')}; закрыто ${count('completed')}; ошибок с запуска ${count('failed')}`;
 }

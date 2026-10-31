@@ -13,7 +13,7 @@ const capabilities={role:'client',nativeManaged:true,networkOwner:true,wifi:fals
 const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(r=>reservation.close(r));
 const app=await createAdmin({address:'127.0.0.1',subnet:'127.0.0.0/8',port,state,lab:true},{rpc:async(route,p)=>{
  if(route==='/settings')return{hostname:'mpn',adminUrl:'/',vpn:{role:'client',transport:mode,nativeManaged:true,address:'192.0.2.1',port:443,sni:'relay.example',serverName:'personal-cert.internal'},dns:{mode:'tunnel',upstreams:'fixture'},profiles:[],wifi:[],capabilities};
- if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},uptimeSeconds:1,cpu:[],network:[]},device:{power},vpn:{ActiveState:'active',StatusText:'ready'},network:{ActiveState:'active'},guard:{active:true},wifi:{},jobs,capabilities,vpnSettingsRecovery:{pending:false}};
+ if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},uptimeSeconds:1,cpu:[],network:[]},device:{power},vpn:{ActiveState:'active',StatusText:'ready'},engineDiagnostics:{status:'sampled',relay:{active:0,completed:0,failed:180}},network:{ActiveState:'active'},guard:{active:true},wifi:{},jobs,capabilities,vpnSettingsRecovery:{pending:false}};
  if(route==='/operations')return{jobs};
  if(route==='/vpn/settings'){calls.push([route,p]);mode=p.transport;const job={id:'mode-'+calls.length,kind:'vpn-settings',status:'passed'};jobs=[job];return job;}
  if(route==='/device/power'){assert.equal(p.confirm,true);assert(['reboot','poweroff'].includes(p.action));calls.push([route,p]);power={action:p.action,delaySeconds:3};return{id:'power',kind:'device-'+p.action,status:'running'};}
@@ -29,11 +29,15 @@ try{
  await page.goto(origin);await page.type('#login-password','browser fixture password');await page.$eval('#login-form',f=>f.requestSubmit());
  await page.waitForFunction(()=>!document.querySelector('#dashboard').hidden&&!document.querySelector('#vpn-transport').disabled);
  assert.deepEqual(await page.$$eval('#vpn-transport option',a=>a.map(e=>e.value)),['boring-tls','combo-tls']);
+ assert.equal(await page.$eval('#vpn-status',e=>e.textContent),'Основной туннель подключён');
+ assert.equal(await page.$eval('#relay-status',e=>e.hidden),false);
+ assert.match(await page.$eval('#relay-status',e=>e.textContent),/ошибок с запуска 180/);
  await page.select('#vpn-transport','boring-tls');await new Promise(r=>setTimeout(r,3300));
  assert.equal(await page.$eval('#vpn-transport',e=>e.value),'boring-tls');
  await page.$eval('#vpn-form',f=>f.requestSubmit());
  await page.waitForFunction(()=>document.querySelector('#message').textContent.includes('завершено'));
  assert.equal(calls[0][1].transport,'boring-tls');
+ await page.waitForFunction(()=>document.querySelector('#vpn-status').textContent==='Туннель подключён'&&document.querySelector('#relay-status').hidden);
  await page.waitForFunction(()=>!document.querySelector('[data-power]').disabled);
  for(const action of ['reboot','poweroff']){
   const before=calls.length;let question='';page.once('dialog',async d=>{question=d.message();await d.dismiss();});
@@ -47,5 +51,5 @@ try{
   assert.deepEqual(calls.at(-1),['/device/power',{action,confirm:true}]);
  }
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({status:'passed',browser:await browser.version(),checks:['transport selector retains choice across polls','transport sent with settings','reboot confirmation cancel sends no request','poweroff confirmation cancel sends no request','reboot accept sends confirmed request','poweroff accept sends confirmed request'],realPowerActions:0,hostNetworkChanged:false}));
+ console.log(JSON.stringify({status:'passed',browser:await browser.version(),checks:['combo packet readiness does not hide relay failures','boring hides inactive relay counters','transport selector retains choice across polls','transport sent with settings','reboot confirmation cancel sends no request','poweroff confirmation cancel sends no request','reboot accept sends confirmed request','poweroff accept sends confirmed request'],realPowerActions:0,hostNetworkChanged:false}));
 }finally{if(browser)await browser.close();await app.close();fs.rmSync(state,{recursive:true,force:true});}

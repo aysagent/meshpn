@@ -15,9 +15,13 @@ test('passwords hashed, sessions revoked, failures rate limited',async t=>{const
 test('HTTP authentication, CSRF, DNS rebinding, method/path and default password boundaries',async t=>{const state=tmp(t),calls=[];const app=await createAdmin({state,address:'127.0.0.1',subnet:'127.0.0.0/8',port:80,capturePort:8443,lab:true},{rpc:async(route,p)=>{calls.push([route,p]);return{hostname:'renamed',okay:true};}});app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>app.close());const url='http://127.0.0.1:'+app.server.address().port;
  const req=(route,{method='GET',data,host='renamed.local',origin='http://renamed.local',cookie,csrf}={})=>new Promise((resolve,reject)=>{const r=http.request(url+route,{method,headers:{host,origin,...(data?{'content-type':'application/json'}:{}),...(cookie?{cookie}:{}),...(csrf?{'x-csrf-token':csrf}:{})}},res=>{let text='';res.on('data',b=>text+=b);res.on('end',()=>resolve({status:res.statusCode,headers:{get:k=>Array.isArray(res.headers[k])?res.headers[k][0]:res.headers[k]},json:async()=>JSON.parse(text)}));});r.on('error',reject);r.end(data?JSON.stringify(data):undefined);});
  assert.equal((await req('/',{host:'evil.example'})).status,403);assert.equal((await req('/',{host:'mpn.local'})).status,403);assert.equal((await req('/')).status,200);assert.equal((await req('/api/settings')).status,401);
+ for(const host of ['renamed.local','127.0.0.1'])for(const route of ['/?usb-check=2','/capture?retry=1','/app.js?v=2'])assert.equal((await req(route,{host})).status,200);
+ assert.equal((await req('/?retry=1',{host:'evil.example'})).status,403);
+ assert.equal((await req('/unknown?retry=1')).status,404);
  let r=await req('/api/login',{method:'POST',data:{password:'admin'},origin:'http://evil.example'});assert.equal(r.status,403);
  r=await req('/api/login',{method:'POST',data:{password:'admin'}});assert.equal(r.status,200);const cookie=r.headers.get('set-cookie').split(';')[0],s=await r.json();assert(r.headers.get('set-cookie').includes('HttpOnly'));
  assert.equal((await req('/api/settings',{cookie})).status,200);
+ assert.equal((await req('/api/status?retry=1',{cookie})).status,404,'API routes retain exact matching');
  assert.equal((await req('/api/vpn/action',{method:'POST',cookie,data:{action:'stop'}})).status,403);
  assert.equal((await req('/api/vpn/action',{method:'POST',cookie,csrf:s.csrf,data:{action:'stop'}})).status,403);
  r=await req('/api/password',{method:'POST',cookie,csrf:s.csrf,data:{oldPassword:'admin',newPassword:'new test password'}});assert.equal(r.status,200);assert.equal((await req('/api/settings',{cookie})).status,401);
