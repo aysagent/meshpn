@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-enrollment-validation",
+  "status": "passed",
+  "engineSha256": "0748d0e74769b1b066889e53388908ba6c2a79ff266db64cfaa17557bb5b0e97",
+  "profile": "chromium-156-bounded-http-v1",
+  "linuxTests": 28,
+  "skipped": 0,
+  "checks": [
+    "boring-and-combo",
+    "H1-and-H2",
+    "fixed-and-address-discovery",
+    "add-rotate-export-import-real-packet-connect",
+    "revocation-and-registry-recovery",
+    "32-concurrent-client-identities"
+  ],
+  "physicalHostsTouched": false,
+  "privatePeerDnsDailyEnabled": false
+}

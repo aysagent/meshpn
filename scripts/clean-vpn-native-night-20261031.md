@@ -30,7 +30,9 @@
    SHA файла, import receipt, configured/saved, capture provenance; 15/15 + Chromium.
    UI профилей: captured/candidate/active, provenance, ограничения, самостоятельный
    observer; combo packet и app TLS должны иметь раздельные результаты.
-6. Удобство combo enrollment: add/export/import/connect/rotate/revoke, готовые
+6. **Повторено локально:** существующий enrollment с новым bounded HTTP-профилем,
+   Linux 28/28, включая 32 клиента/exit; [receipt](../fixtures/clean-vpn-native-enrollment-20261031.json).
+   Удобство combo enrollment: add/export/import/connect/rotate/revoke, готовые
    отдельные keys/CA/profile; `.mpn` и discovery только в изолированной среде.
 7. Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
