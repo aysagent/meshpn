@@ -1,8 +1,18 @@
 # Политика совместимости native профиля
 
-`bounded-cold-v1` описывает текущий экспериментальный cold TLS/H2 subset.
+`bounded-cold-http-v1` описывает текущий экспериментальный cold TLS/H2 subset.
 Это **не профиль Chrome**. Он сохраняет ограничения ресурсов, проверку CA/имени
 и exporter-bound PSK. `browser_profiles:false` остаётся.
+
+С 31 октября профиль может содержать ограниченный `http`: сохранённый
+`user_agent` (1–512 печатных ASCII байт, без пробелов по краям) для H1/H2 и
+`http2_pseudo_header_order` (ровно четыре разных request pseudo-headers).
+Произвольные заголовки, cookie и подмена авторизации не поддерживаются.
+SETTINGS 3 клиент может не отправлять; server stream cap и запрет push остаются.
+Старые профили без `http` сохраняют прежнее поведение. Старый capabilities/report
+`bounded-cold-v1` оставлен историческим измерением.
+
+[Wire-проверка и ограничения нового профиля](clean-vpn-native-http-profile-20261031.md).
 
 Политика экспортируется самим `clean-vpn-engine --capabilities`. H2 ranges,
 обязательные SETTINGS и TLS allowlists берутся из тех же C++ констант, которыми

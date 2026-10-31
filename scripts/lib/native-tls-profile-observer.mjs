@@ -7,9 +7,15 @@ import { ja4FromClientHelloBody } from './tls-clienthello-ja4.mjs';
 
 export function observeTlsProfile(wire, profile) {
   const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).length===keys.length&&keys.every(k=>Object.hasOwn(o,k));
-  assert.ok(exact(profile,['schema','kind','id','scenario','tls',...(Object.hasOwn(profile,'http2')?['http2']:[])]));
+  assert.ok(exact(profile,['schema','kind','id','scenario','tls',...(Object.hasOwn(profile,'http2')?['http2']:[]),...(Object.hasOwn(profile,'http')?['http']:[])]));
   assert.equal(profile.schema,1);assert.equal(profile.kind,'clean-vpn-native-tls-profile');assert.equal(profile.scenario,'cold');
   assert.match(profile.id,/^[A-Za-z0-9_.-]{1,64}$/);
+  if(Object.hasOwn(profile,'http')){
+    const h=profile.http;assert.ok(h&&typeof h==='object'&&!Array.isArray(h));
+    assert.ok(Object.keys(h).length>=1&&Object.keys(h).length<=2&&Object.keys(h).every(k=>['user_agent','http2_pseudo_header_order'].includes(k)));
+    if(Object.hasOwn(h,'user_agent'))assert.ok(typeof h.user_agent==='string'&&/^[\x21-\x7e](?:[\x20-\x7e]{0,510}[\x21-\x7e])?$/.test(h.user_agent));
+    if(Object.hasOwn(h,'http2_pseudo_header_order')){assert.ok(Array.isArray(h.http2_pseudo_header_order));assert.deepEqual([...h.http2_pseudo_header_order].sort(),[':authority',':method',':path',':scheme']);}
+  }
   const t=profile.tls;
   assert.ok(exact(t,['min_version','max_version','cipher_suites','supported_groups','key_share_groups','signature_algorithms',
     'alpn','grease','permute_extensions','ech_grease','ocsp','sct','extension_types','optional_extension_types',

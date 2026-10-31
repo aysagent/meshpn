@@ -578,6 +578,7 @@ struct Session {
       check(!SSL_has_application_settings(ssl),"h2_alps_invalid");
       if(config.client){const auto window=int64_t(time(nullptr))/900;
         std::vector<std::pair<std::string,std::string>> request={{"authorization","Bearer "+token(secret,exporter(ssl),window)},{"x-clean-vpn-window",std::to_string(window)}};
+        if(config.tls_profile&&!config.tls_profile->user_agent.empty())request.emplace_back("user-agent",config.tls_profile->user_agent);
         if(config.discovery||config.address_assignment)request.emplace_back("x-clean-vpn-address-mode",config.discovery?"discover-v1":"session-v1");
         submit_headers(request,true);}
       return;
@@ -644,9 +645,14 @@ struct Session {
     }
     if(config.client){
       const auto window=int64_t(time(nullptr))/900;
-      std::vector<std::pair<std::string,std::string>> request={{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name},
-        {"authorization","Bearer "+token(secret,exporter(ssl),window)},
-        {"x-clean-vpn-window",std::to_string(window)},{"accept","*/*"}};
+      const std::vector<std::string> native_order={":method",":path",":scheme",":authority"};
+      const auto& order=config.tls_profile?config.tls_profile->pseudo_header_order:native_order;
+      const std::map<std::string,std::string> values={{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name}};
+      std::vector<std::pair<std::string,std::string>> request;
+      for(const auto& key:order)request.emplace_back(key,values.at(key));
+      if(config.tls_profile&&!config.tls_profile->user_agent.empty())request.emplace_back("user-agent",config.tls_profile->user_agent);
+      request.emplace_back("authorization","Bearer "+token(secret,exporter(ssl),window));
+      request.emplace_back("x-clean-vpn-window",std::to_string(window));request.emplace_back("accept","*/*");
       if(config.discovery||config.address_assignment)request.emplace_back("x-clean-vpn-address-mode",config.discovery?"discover-v1":"session-v1");
       submit_headers(request,true);
     }

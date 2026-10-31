@@ -1,0 +1,263 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-http-profile-validation",
+  "status": "passed",
+  "engineSha256": "0748d0e74769b1b066889e53388908ba6c2a79ff266db64cfaa17557bb5b0e97",
+  "fixtureSha256": "be118240972ff0bd4efb061f8a41f89b1b864a953212a4eb6b81c9803d03fba3",
+  "tests": {
+    "ctest": 14,
+    "nativeTlsProfileIntegration": 22,
+    "independentWire": 2,
+    "policy": 11,
+    "skipped": 0
+  },
+  "physicalHostsTouched": false,
+  "profileActivated": false,
+  "browserEquivalent": false,
+  "wireReceipt": "native-browser-captures/native-bounded-http-20261031.json",
+  "comparison": {
+    "schema": 1,
+    "kind": "clean-vpn-http2-capture-comparison",
+    "status": "different",
+    "sampleCounts": {
+      "browser": 20,
+      "native": 6,
+      "browserComplete": 20,
+      "nativeComplete": 6
+    },
+    "fields": [
+      {
+        "field": "settingsFrames",
+        "browser": [
+          [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                6291456
+              ],
+              [
+                6,
+                262144
+              ]
+            ]
+          ]
+        ],
+        "native": [
+          [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "windowUpdates",
+        "browser": [
+          [
+            {
+              "streamId": 0,
+              "increment": 15663105
+            }
+          ]
+        ],
+        "native": [
+          [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "headerOrder",
+        "browser": [
+          [
+            ":method",
+            ":authority",
+            ":scheme",
+            ":path",
+            "sec-ch-ua",
+            "sec-ch-ua-mobile",
+            "sec-ch-ua-platform",
+            "upgrade-insecure-requests",
+            "user-agent",
+            "accept",
+            "sec-fetch-site",
+            "sec-fetch-mode",
+            "sec-fetch-user",
+            "sec-fetch-dest",
+            "accept-encoding",
+            "accept-language",
+            "priority"
+          ]
+        ],
+        "native": [
+          [
+            ":method",
+            ":authority",
+            ":scheme",
+            ":path",
+            "user-agent",
+            "authorization",
+            "<other>",
+            "accept"
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "publicHeaderValues",
+        "browser": [
+          [
+            [
+              ":method",
+              "GET"
+            ],
+            [
+              ":scheme",
+              "https"
+            ],
+            [
+              "sec-ch-ua",
+              "\"Not:A-Brand\";v=\"8\", \"Chromium\";v=\"156\""
+            ],
+            [
+              "sec-ch-ua-mobile",
+              "?0"
+            ],
+            [
+              "sec-ch-ua-platform",
+              "\"Linux\""
+            ],
+            [
+              "upgrade-insecure-requests",
+              "1"
+            ],
+            [
+              "user-agent",
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+            ],
+            [
+              "accept",
+              "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
+            ],
+            [
+              "sec-fetch-site",
+              "none"
+            ],
+            [
+              "sec-fetch-mode",
+              "navigate"
+            ],
+            [
+              "sec-fetch-user",
+              "?1"
+            ],
+            [
+              "sec-fetch-dest",
+              "document"
+            ],
+            [
+              "accept-encoding",
+              "gzip, deflate, br, zstd"
+            ],
+            [
+              "accept-language",
+              "en-US,en;q=0.9"
+            ],
+            [
+              "priority",
+              "u=0, i"
+            ]
+          ]
+        ],
+        "native": [
+          [
+            [
+              ":method",
+              "POST"
+            ],
+            [
+              ":scheme",
+              "https"
+            ],
+            [
+              "user-agent",
+              "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+            ],
+            [
+              "accept",
+              "*/*"
+            ]
+          ]
+        ],
+        "status": "different"
+      },
+      {
+        "field": "headersPriority",
+        "browser": [
+          {
+            "dependency": 0,
+            "exclusive": true,
+            "weight": 256
+          }
+        ],
+        "native": [
+          null
+        ],
+        "status": "different"
+      },
+      {
+        "field": "hpackBlockBytes",
+        "browser": [
+          473
+        ],
+        "native": [
+          163,
+          164
+        ],
+        "status": "different"
+      }
+    ],
+    "inputIntegrity": {
+      "browser": true,
+      "native": true
+    },
+    "profileActivated": false,
+    "browserEquivalent": false,
+    "limitations": [
+      "controlled-endpoint-first-request-only",
+      "ALPS-not-negotiated-at-this-endpoint",
+      "HPACK-size-not-encoder-strategy",
+      "GET-navigation-vs-native-POST-are-different-application-contracts",
+      "header-values-redacted-except-explicit-public-allowlist",
+      "no-resumption-or-later-stream-or-timing-claim"
+    ]
+  }
+}

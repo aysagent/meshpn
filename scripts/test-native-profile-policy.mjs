@@ -17,6 +17,18 @@ function changed(source,edit) {
 }
 const has=(r,reason)=>r.checks.some(c=>c.reason===reason);
 
+test('current HTTP policy permits omitted SETTINGS 3 without approving oversized Chromium windows',()=>{
+  const current=read('fixtures/clean-vpn-native-profile-policy-capabilities-20261031.json');
+  assert.equal(current.profile_policy.application.request_profile.user_agent_max_bytes,512);
+  const reference=read('fixtures/native-browser-captures/native-bounded-http-20261031.json');
+  assert.equal(assess(reference,current,reference).status,'needs-native-validation');
+  const r=assess(browser,current,reference);assert.equal(r.status,'blocked');
+  assert.ok(!r.checks.some(c=>c.field==='setting:3'&&c.status==='blocked'));
+  for(const field of['setting:4','setting:6','connection_window'])
+    assert.ok(r.checks.some(c=>c.field===field&&c.status==='blocked'));
+  assert.equal(r.claims.browserEquivalent,false);assert.equal(r.claims.profileActivated,false);
+});
+
 test('measured Chromium is blocked by explicit TLS and H2 policy without altering evidence',()=>{
   const before=JSON.stringify([browser,caps,native]),r=assess(browser,caps,native);
   assert.equal(r.status,'blocked');assert.equal(JSON.stringify([browser,caps,native]),before);

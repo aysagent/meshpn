@@ -307,8 +307,8 @@ test('ALPS profile preserves reconnect blackhole and bounded packet flow under s
 
 test('engine capability limits are the limits enforced by its profile loader',t=>{
   const f=fixture(t),caps=JSON.parse(execFileSync(build+'/clean-vpn-engine',['--capabilities']));
-  const policy=caps.profile_policy;assert.equal(policy.id,'bounded-cold-v1');assert.equal(policy.schema,1);
-  assert.deepEqual(policy,JSON.parse(fs.readFileSync('fixtures/clean-vpn-native-profile-policy-capabilities.json')).profile_policy);
+  const policy=caps.profile_policy;assert.equal(policy.id,'bounded-cold-http-v1');assert.equal(policy.schema,1);
+  assert.deepEqual(policy,JSON.parse(fs.readFileSync('fixtures/clean-vpn-native-profile-policy-capabilities-20261031.json')).profile_policy);
   assert.equal(policy.activation.automatic,false);
   const profile=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/cold-alps.json'));
   for(const rule of policy.http2.settings) {
@@ -427,4 +427,40 @@ test('browser profile remains unchanged on HTTP/1.1 negotiation, including combo
    const r=observeTlsProfile(wire,p);assert.equal(r.status,'matched',JSON.stringify(r.differences));assert.deepEqual(r.actual.alpn,p.tls.alpn);
   }
  }
+});
+
+
+test('bounded HTTP request profile rejects header injection and malformed pseudo-header orders offline',t=>{
+  const f=fixture(t),p=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-http.json'));
+  const r=checkConfig(f,p);assert.equal(r.status,0,r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).tls_profile.http,p.http);
+  for(const change of [
+    p=>{p.http={};},p=>{p.http=null;},p=>{p.http.headers={cookie:'no'};},
+    ...['',' ',' leading','trailing ','x\r\nInjected: yes','x\0y','é','x'.repeat(513)].map(value=>p=>{p.http.user_agent=value;}),
+    p=>{p.http.user_agent=12;},p=>{p.http.http2_pseudo_header_order=':method';},
+    p=>{p.http.http2_pseudo_header_order=[':method',':method',':scheme',':path'];},
+    p=>{p.http.http2_pseudo_header_order.push('authorization');},
+    p=>{p.http.http2_pseudo_header_order[0]=null;},
+  ]) {
+    const bad=structuredClone(p);change(bad);const r=checkConfig(f,bad);
+    assert.equal(r.status,1,JSON.stringify(bad.http));assert.equal(r.stdout,'');
+  }
+  for(const value of ['x','x'.repeat(512)]){const q=structuredClone(p);q.http.user_agent=value;assert.equal(checkConfig(f,q).status,0);}
+  for(const http of [{user_agent:'test/1'},{http2_pseudo_header_order:p.http.http2_pseudo_header_order}]){
+    const q={...p,http};assert.equal(checkConfig(f,q).status,0);
+  }
+  assert.equal(JSON.parse(checkConfig(f,baseline).stdout).tls_profile.http,null);
+});
+
+test('bounded HTTP profile keeps native H2/H1 packet authentication and combo negotiation', {timeout:90000},async t=>{
+  const p=JSON.parse(fs.readFileSync('fixtures/native-tls-profiles/chromium-156-bounded-http.json'));
+  for(const [combo,http_version] of [[false,'2'],[false,'1.1'],[true,'2'],[true,'1.1']]){
+    for(const wire of await exchange(fixture(t),p,{combo,changes:{http_version:'auto'},exitChanges:{http_version},alps:true}))
+      assert.equal(observeTlsProfile(wire,p).status,'matched');
+  }
+  for(const http_version of ['2','1.1']){
+    const f=fixture(t),other=fixture(t);
+    for(const changes of [{ca:other.cert},{server_name:'wrong.localhost'},{secret_path:other.secret}])
+      await exchange(f,p,{changes:{http_version:'auto',...changes},exitChanges:{http_version},alps:true,mode:'reject'});
+  }
 });

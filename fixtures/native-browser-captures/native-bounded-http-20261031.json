@@ -1,0 +1,1926 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-h2-probe-report",
+  "engineSha256": "be118240972ff0bd4efb061f8a41f89b1b864a953212a4eb6b81c9803d03fba3",
+  "profileSha256": "baaf251e0de975de15d1d501b2630235f3210fe15efe49e3dfcb326e72d99e2f",
+  "captureEndpoint": {
+    "implementation": "Node TLS -> loopback cleartext H2",
+    "node": "v18.19.1",
+    "openssl": "3.0.13",
+    "settings": {
+      "maxConcurrentStreams": 4,
+      "maxHeaderListSize": 8192
+    },
+    "alps": "not-negotiated",
+    "tls": "TLSv1.3-only"
+  },
+  "validation": {
+    "expectedHttp403": true,
+    "packetInjection": false,
+    "systemSettingsChanged": false,
+    "physicalHostsTouched": false
+  },
+  "bundle": {
+    "schema": 1,
+    "kind": "clean-vpn-browser-capture-bundle",
+    "metadata": {
+      "schema": 1,
+      "id": "native-cold-h2-probe",
+      "identity": {
+        "browser": "native-clean-vpn-engine-fixture",
+        "version": "sha256:be118240972ff0bd4efb061f8a41f89b1b864a953212a4eb6b81c9803d03fba3",
+        "versionSource": "operator-declared",
+        "platform": "linux",
+        "architecture": "arm64"
+      },
+      "context": {
+        "scenario": "cold",
+        "isolation": "fresh-process-per-sample",
+        "certificateValidation": "enabled",
+        "http": "h2",
+        "proxy": "none",
+        "echMode": "grease",
+        "extensionOrder": "permuted",
+        "padding": "optional"
+      }
+    },
+    "samples": [
+      {
+        "index": 1,
+        "observedAt": "2026-10-31T00:09:10.211Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              10,
+              23,
+              0,
+              65281,
+              43,
+              11,
+              51,
+              16,
+              13,
+              17613,
+              27,
+              5,
+              65037,
+              18,
+              45
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 10794,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "fe15a2c1ca7beafec99de57b1f613f90",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,10-23-0-65281-43-11-51-16-13-17613-27-5-65037-18-45,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_000a,0017,0000,ff01,002b,000b,0033,0010,000d,44cd,001b,0005,fe0d,0012,002d_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1800
+            }
+          ],
+          "clientHelloBytes": 1800,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 163
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 163,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      },
+      {
+        "index": 2,
+        "observedAt": "2026-10-31T00:09:10.519Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              65281,
+              18,
+              11,
+              10,
+              0,
+              17613,
+              51,
+              16,
+              45,
+              27,
+              13,
+              65037,
+              5,
+              43,
+              23
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 39578,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "fc050cf425200e4bab577b95f7dd2910",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,65281-18-11-10-0-17613-51-16-45-27-13-65037-5-43-23,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_ff01,0012,000b,000a,0000,44cd,0033,0010,002d,001b,000d,fe0d,0005,002b,0017_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1800
+            }
+          ],
+          "clientHelloBytes": 1800,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 164
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 164,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      },
+      {
+        "index": 3,
+        "observedAt": "2026-10-31T00:09:10.707Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              5,
+              16,
+              65037,
+              23,
+              18,
+              65281,
+              11,
+              27,
+              45,
+              13,
+              0,
+              17613,
+              51,
+              43,
+              10
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 10794,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "b063ba324e32a3506eb9f813d9bba6cf",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,5-16-65037-23-18-65281-11-27-45-13-0-17613-51-43-10,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_0005,0010,fe0d,0017,0012,ff01,000b,001b,002d,000d,0000,44cd,0033,002b,000a_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1800
+            }
+          ],
+          "clientHelloBytes": 1800,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 282
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 163
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 163,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      },
+      {
+        "index": 4,
+        "observedAt": "2026-10-31T00:09:11.004Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              17613,
+              27,
+              5,
+              0,
+              43,
+              10,
+              13,
+              51,
+              65037,
+              65281,
+              45,
+              23,
+              16,
+              11,
+              18
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 2570,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "e7d4489959487e495351878ebab3dd18",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,17613-27-5-0-43-10-13-51-65037-65281-45-23-16-11-18,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_44cd,001b,0005,0000,002b,000a,000d,0033,fe0d,ff01,002d,0017,0010,000b,0012_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1704
+            }
+          ],
+          "clientHelloBytes": 1704,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 163
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 163,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      },
+      {
+        "index": 5,
+        "observedAt": "2026-10-31T00:09:11.194Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              0,
+              43,
+              11,
+              18,
+              17613,
+              16,
+              45,
+              23,
+              5,
+              65281,
+              51,
+              27,
+              65037,
+              13,
+              10
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 6682,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "3a74095f3e6cc37719f1339daca6f30e",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,0-43-11-18-17613-16-45-23-5-65281-51-27-65037-13-10,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_0000,002b,000b,0012,44cd,0010,002d,0017,0005,ff01,0033,001b,fe0d,000d,000a_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1704
+            }
+          ],
+          "clientHelloBytes": 1704,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 163
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 163,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      },
+      {
+        "index": 6,
+        "observedAt": "2026-10-31T00:09:11.501Z",
+        "negotiated": {
+          "alpn": "h2",
+          "tlsVersion": "TLSv1.3",
+          "sessionReused": false
+        },
+        "measurement": {
+          "actual": {
+            "cipher_suites": [
+              4865,
+              4866,
+              4867,
+              49195,
+              49199,
+              49196,
+              49200,
+              52393,
+              52392
+            ],
+            "supported_groups": [
+              4588,
+              29,
+              23,
+              24
+            ],
+            "key_share_groups": [
+              4588,
+              29
+            ],
+            "signature_algorithms": [
+              2308,
+              2309,
+              2310,
+              1027,
+              2052,
+              1025,
+              1283,
+              2053,
+              1281,
+              2054,
+              1537
+            ],
+            "alpn": [
+              "h2",
+              "http/1.1"
+            ],
+            "supported_versions": [
+              772,
+              771
+            ],
+            "extension_types": [
+              45,
+              23,
+              43,
+              51,
+              27,
+              18,
+              11,
+              0,
+              13,
+              5,
+              10,
+              65037,
+              65281,
+              17613,
+              16
+            ],
+            "grease": true,
+            "certificate_compression": [
+              2
+            ],
+            "application_settings": [
+              "h2"
+            ]
+          },
+          "keyShares": [
+            {
+              "group": 10794,
+              "length": 1
+            },
+            {
+              "group": 4588,
+              "length": 1216
+            },
+            {
+              "group": 29,
+              "length": 32
+            }
+          ],
+          "sessionIdBytes": 32,
+          "ja3": "367803e267059e1553d918a96fc66fc2",
+          "ja3String": "771,4865-4866-4867-49195-49199-49196-49200-52393-52392,45-23-43-51-27-18-11-0-13-5-10-65037-65281-17613-16,4588-29-23-24,0",
+          "ja3Sorted": "9fc752c58190630c49e1812906b40077",
+          "ja4": {
+            "fingerprint": "t13d0915h2_f91f431d341e_54d72502093d",
+            "fingerprint_alt_sni_alpn_in_j4c": "t13d0915h2_f91f431d341e_f77074818dd4",
+            "ja4_a": "t13d0915h2",
+            "ja4_b": "f91f431d341e",
+            "ja4_c": "54d72502093d",
+            "ja4_c_alt_sni_alpn_in_hash": "f77074818dd4",
+            "raw_r": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_r_alt_sni_alpn_in_segment": "t13d0915h2_1301,1302,1303,c02b,c02c,c02f,c030,cca8,cca9_0000,0005,000a,000b,000d,0012,0017,001b,002b,002d,0033,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601",
+            "raw_o": "t13d0915h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8_002d,0017,002b,0033,001b,0012,000b,0000,000d,0005,000a,fe0d,ff01,44cd,0010_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+          }
+        },
+        "layout": {
+          "records": [
+            {
+              "type": 22,
+              "version": 769,
+              "bytes": 1704
+            }
+          ],
+          "clientHelloBytes": 1704,
+          "cipherGreaseSlots": [
+            0
+          ],
+          "extensions": [
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 0
+            },
+            {
+              "type": 45,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 23,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 43,
+              "grease": false,
+              "bytes": 7
+            },
+            {
+              "type": 51,
+              "grease": false,
+              "bytes": 1263
+            },
+            {
+              "type": 27,
+              "grease": false,
+              "bytes": 3
+            },
+            {
+              "type": 18,
+              "grease": false,
+              "bytes": 0
+            },
+            {
+              "type": 11,
+              "grease": false,
+              "bytes": 2
+            },
+            {
+              "type": 0,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": 13,
+              "grease": false,
+              "bytes": 24
+            },
+            {
+              "type": 5,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 10,
+              "grease": false,
+              "bytes": 12
+            },
+            {
+              "type": 65037,
+              "grease": false,
+              "bytes": 186
+            },
+            {
+              "type": 65281,
+              "grease": false,
+              "bytes": 1
+            },
+            {
+              "type": 17613,
+              "grease": false,
+              "bytes": 5
+            },
+            {
+              "type": 16,
+              "grease": false,
+              "bytes": 14
+            },
+            {
+              "type": null,
+              "grease": true,
+              "bytes": 1
+            }
+          ],
+          "certificateCompression": [
+            2
+          ]
+        },
+        "candidateStatus": "unsupported",
+        "unsupported": [
+          "alps-requires-explicit-http2-settings"
+        ],
+        "http2": {
+          "schema": 1,
+          "kind": "clean-vpn-http2-prefix",
+          "status": "complete",
+          "scope": "client-preface-through-first-END_HEADERS",
+          "settingsFrames": [
+            [
+              [
+                1,
+                65536
+              ],
+              [
+                2,
+                0
+              ],
+              [
+                4,
+                1048576
+              ],
+              [
+                6,
+                8192
+              ]
+            ]
+          ],
+          "windowUpdates": [
+            {
+              "streamId": 0,
+              "increment": 983041
+            }
+          ],
+          "frames": [
+            {
+              "type": 4,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 24
+            },
+            {
+              "type": 8,
+              "flags": 0,
+              "streamId": 0,
+              "payloadBytes": 4
+            },
+            {
+              "type": 1,
+              "flags": 4,
+              "streamId": 1,
+              "payloadBytes": 163
+            }
+          ],
+          "firstHeaders": {
+            "streamId": 1,
+            "blockBytes": 163,
+            "paddingBytes": 0,
+            "priority": null
+          },
+          "headers": {
+            "names": [
+              ":method",
+              ":authority",
+              ":scheme",
+              ":path",
+              "user-agent",
+              "authorization",
+              "<other>",
+              "accept"
+            ],
+            "publicValues": [
+              [
+                ":method",
+                "POST"
+              ],
+              [
+                ":scheme",
+                "https"
+              ],
+              [
+                "user-agent",
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+              ],
+              [
+                "accept",
+                "*/*"
+              ]
+            ],
+            "redactedValues": 4
+          },
+          "alps": "not-negotiated-by-capture-endpoint",
+          "limitations": [
+            "HPACK-block-size-not-encoder-strategy",
+            "not-later-stream-or-timing-evidence"
+          ]
+        }
+      }
+    ],
+    "assessment": {
+      "status": "unsupported",
+      "sampleCount": 6,
+      "unsupported": [
+        "alps-requires-explicit-http2-settings"
+      ],
+      "variations": [],
+      "distinctJa3": 6,
+      "distinctJa4": 1,
+      "http2CompleteSamples": 6,
+      "candidateProfile": null,
+      "nativeValidated": false,
+      "browserEquivalent": false
+    },
+    "limitations": [
+      "metadata-is-declared-not-attested",
+      "cold-first-ClientHello-and-optional-first-request-H2",
+      "H2-prefix-not-full-HTTP-fidelity",
+      "three-samples-is-only-a-minimum-not-statistical-proof",
+      "candidate-requires-native-check-config-and-independent-wire-comparison"
+    ],
+    "contentSha256": "2606afecb972eb98b628683dce867ec9e62f41ac3f52640448c97d1ec661c0bf"
+  }
+}

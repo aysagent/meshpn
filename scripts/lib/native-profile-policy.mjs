@@ -19,7 +19,7 @@ function bundle(document) {
 function policyFrom(capabilities) {
   assert.equal(capabilities.version,1);assert.equal(capabilities.engine,'clean-vpn-native-m1');
   const p=capabilities.profile_policy;
-  assert.equal(p?.schema,1,'policy_schema');assert.equal(p.id,'bounded-cold-v1','policy_id');
+  assert.equal(p?.schema,1,'policy_schema');assert.ok(['bounded-cold-v1','bounded-cold-http-v1'].includes(p.id),'policy_id');
   assert.equal(p.scope,'policy-envelope-not-native-validation');
   for(const key of ['tls13_cipher_suites','tls12_cipher_suites','signature_algorithms','extension_types','certificate_compression'])ids(p.tls[key]);
   assert.equal(p.tls.alps_codepoint,17613);

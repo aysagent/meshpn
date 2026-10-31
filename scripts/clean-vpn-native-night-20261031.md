@@ -20,7 +20,10 @@
    typed counters и строгие readers, CTest 14/14, H1/H2/service 3/3, Linux controllers 49/49. Никакого
    вывода «исправлено» по одному успешному повтору. Отдельно TLS без SNI сейчас
    отклоняется transparent; совместимость исследовать без прямого обхода.
-4. H2 mimicry: исполняемый bounded contract, ALPS agreement, wire comparison;
+4. **Готово локально:** [bounded HTTP-профиль](clean-vpn-native-http-profile-20261031.md),
+   UA H1/H2, pseudo-header order, SETTINGS 3 opt-out, независимая wire-проверка;
+   22/22 integration, 14/14 CTest. Priority/полная browser equivalence не реализованы.
+   H2 mimicry: исполняемый bounded contract, ALPS agreement, wire comparison;
    сначала исследовать существующую реализацию, не повторять уже готовые окна/
    SETTINGS. Новые browser параметры не должны молча обходить memory limits.
 5. UI профилей: captured/candidate/active, provenance, ограничения, самостоятельный

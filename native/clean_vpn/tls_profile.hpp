@@ -46,6 +46,8 @@ struct Profile {
   bool optional_padding=false;
   bool brotli=false, alps=false;
   std::vector<std::pair<int32_t,uint32_t>> h2_settings;
+  std::string user_agent;
+  std::vector<std::string> pseudo_header_order={":method",":path",":scheme",":authority"};
   int32_t h2_window=1048576;
   Bytes alpn;
   bool grease_enabled, permute, ech, ocsp, sct;
@@ -53,11 +55,29 @@ struct Profile {
   explicit Profile(const json& j) : document(j) {
     std::set<std::string> root_fields={"schema","kind","id","scenario","tls"};
     if(j.contains("http2"))root_fields.insert("http2");
+    if(j.contains("http"))root_fields.insert("http");
     fields(j,root_fields);
     require(j.at("schema").is_number_integer() && j.at("schema")==1 &&
       j.at("kind")=="clean-vpn-native-tls-profile" && j.at("scenario")=="cold", "profile_schema");
     id=j.at("id").get<std::string>(); require(!id.empty() && id.size()<=64,"profile_id");
     for (unsigned char c : id) require(std::isalnum(c)||c=='-'||c=='_'||c=='.',"profile_id");
+    if(j.contains("http")) {
+      const auto& h=j.at("http");std::set<std::string> keys;
+      if(h.contains("user_agent"))keys.insert("user_agent");
+      if(h.contains("http2_pseudo_header_order"))keys.insert("http2_pseudo_header_order");
+      require(!keys.empty(),"profile_http_fields");fields(h,keys);
+      if(h.contains("user_agent")) {
+        require(h.at("user_agent").is_string(),"profile_user_agent");user_agent=h.at("user_agent").get<std::string>();
+        require(!user_agent.empty()&&user_agent.size()<=512&&user_agent.front()!=' '&&user_agent.back()!=' ',"profile_user_agent");
+        for(unsigned char c:user_agent)require(c>=0x20&&c<=0x7e,"profile_user_agent");
+      }
+      if(h.contains("http2_pseudo_header_order")) {
+        const auto& order=h.at("http2_pseudo_header_order");require(order.is_array()&&order.size()==4,"profile_pseudo_headers");
+        std::vector<std::string> values;std::set<std::string> seen;
+        for(const auto& key:order){require(key.is_string(),"profile_pseudo_headers");values.push_back(key.get<std::string>());seen.insert(values.back());}
+        require(seen==std::set<std::string>{":method",":path",":scheme",":authority"},"profile_pseudo_headers");pseudo_header_order=std::move(values);
+      }
+    }
     const auto& t=j.at("tls");
     std::set<std::string> tls_fields={"min_version","max_version","cipher_suites","supported_groups","key_share_groups",
       "signature_algorithms","alpn","grease","permute_extensions","ech_grease","ocsp","sct","extension_types","optional_extension_types"};
@@ -74,7 +94,7 @@ struct Profile {
       const auto& w=h.at("connection_window");
       require(w.is_number_integer() && w>=profile_policy::window_min && w<=profile_policy::window_max,"profile_h2_window");h2_window=w.get<int32_t>();
       const auto& settings=h.at("settings");
-      require(settings.is_array() && settings.size()>=4 && settings.size()<=6,"profile_h2_settings");
+      require(settings.is_array() && settings.size()>=3 && settings.size()<=6,"profile_h2_settings");
       std::set<int> seen;
       for(const auto& pair:settings) {
         require(pair.is_array() && pair.size()==2 && pair[0].is_number_integer() && pair[0]>=1 && pair[0]<=6 &&
@@ -211,8 +231,9 @@ struct Profile {
       {"certificate_compression",{{"algorithms",brotli?json::array({2}):json::array()},
         {"max_certificate_bytes",certificate_compression::certificate_limit},{"decoder_memory_bytes",certificate_compression::memory_limit}}},
       {"http2",alps?document.at("http2"):json(nullptr)},
+      {"http",document.contains("http")?document.at("http"):json(nullptr)},
       {"alps",{{"enabled",alps},{"codepoint",17613},{"client_payload","empty"}}},
-      {"limitations",{"not-full-browser-profile","no-HTTP-header-or-priority-mimicry","no-resumption-or-0RTT","HRR-layout-not-profile-verified"}}};
+      {"limitations",{"not-full-browser-profile","no-HTTP2-priority-mimicry","fixed-POST-carrier-not-browser-navigation","no-resumption-or-0RTT","HRR-layout-not-profile-verified"}}};
   }
 };
 } // namespace cvpn::profile
