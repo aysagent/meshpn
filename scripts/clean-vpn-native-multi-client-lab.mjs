@@ -17,6 +17,9 @@ import {cleanupLab} from './clean-vpn-native-runtime-cleanup.mjs';
 const cli=JSON.parse(process.env.CVPN_CONTAINER_COMMAND??'["podman"]');
 assert.ok(Array.isArray(cli)&&cli.length&&cli.every(s=>typeof s==='string'));
 const image=process.env.CVPN_RUNTIME_IMAGE;assert.ok(image);
+const profilePath=process.env.CVPN_MULTI_PROFILE??'fixtures/native-tls-profiles/chromium-156-bounded-cold.json';
+const profileStat=fs.lstatSync(profilePath);assert.ok(profileStat.isFile()&&!profileStat.isSymbolicLink()&&profileStat.size<=16384,'bounded_profile_file');
+const profileBytes=fs.readFileSync(profilePath);
 const output=path.resolve(process.argv[2]??'');assert.ok(process.argv.length===3&&!fs.existsSync(output));
 const prefix='cvpnrt-'+randomBytes(8).toString('hex'),label='org.meshpn.native-runtime-lab='+prefix;
 const root=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'cvpn-multi-'));
@@ -33,7 +36,7 @@ const clients=Array.from({length:clientCount},(_,i)=>i).map(i=>({i,name:prefix+'
   ip:'10.77.0.'+(10+i),subnet:`192.168.${88+i}.0/24`,gateway:`192.168.${88+i}.2`,appIP:`192.168.${88+i}.3`}));
 const ownership={schema:1,kind:'native-runtime-lab-ownership',prefix,cli};
 fs.writeFileSync(output+'.ownership.json',JSON.stringify(ownership)+'\n',{flag:'wx',mode:0o600});
-const report={schema:1,kind:'native-combo-multi-client',status:'failed',image,clients:clientCount,limits:{sessions,perClient},checks:[]};
+const report={schema:1,kind:'native-combo-multi-client',status:'failed',image,profileSha256:createHash('sha256').update(profileBytes).digest('hex'),clients:clientCount,limits:{sessions,perClient},checks:[]};
 const step=s=>{report.checks.push(s);console.log('MULTI_CLIENT='+s);};
 const wait=async fn=>{const end=Date.now()+30000;let error;while(Date.now()<end){try{return fn();}catch(e){error=e;await delay(250);}}throw error;};
 const health=name=>e(name,'node','/opt/clean-vpn/clean-vpn-native-runtime-health.mjs');
@@ -56,8 +59,8 @@ try{
   report.imageId=JSON.parse(p(['image','inspect',image]))[0].Id;
   report.engineSha256=p(['run','--rm','--network=none','--entrypoint=sha256sum',image,'/usr/local/bin/clean-vpn-engine']).split(/\s/)[0];
   const bundle=path.join(root,'bundle');
-  createRuntimeConfig(parseRuntimeConfig(['create','--directory='+bundle,'--mode=container','--endpoint=10.77.0.2','--exit-address=10.77.0.2',
-    '--server-name=runtime.test','--clients='+clientCount,'--relay-sessions='+sessions,'--relay-per-client='+perClient,'--port=3443','--transport=combo-tls','--public-name=relay.example']));
+  createRuntimeConfig({...parseRuntimeConfig(['create','--directory='+bundle,'--mode=container','--endpoint=10.77.0.2','--exit-address=10.77.0.2',
+    '--server-name=runtime.test','--clients='+clientCount,'--relay-sessions='+sessions,'--relay-per-client='+perClient,'--port=3443','--transport=combo-tls','--public-name=relay.example']),profile:profileBytes});
   p(['network','create','--label',label,'--internal','--subnet=10.77.0.0/24',net]);
   for(const c of clients)p(['network','create','--label',label,'--internal','--subnet='+c.subnet,c.lan]);
   for(const v of [exitVolume,originVolume,replay,...clients.map(c=>c.volume)])p(['volume','create','--label',label,v]);

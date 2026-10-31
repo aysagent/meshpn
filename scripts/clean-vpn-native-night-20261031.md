@@ -36,6 +36,8 @@
    отдельные keys/CA/profile; `.mpn` и discovery только в изолированной среде.
 7. **Готово локально:** [актуальные managed Compose/Alpine](clean-vpn-native-containers-20261031.md),
    CTest 14/14, wire/enrollment 10/10, managed 12/12, combo 17/17.
+   Дополнительно [30 минут нового musl HTTP-профиля](clean-vpn-native-musl-http-soak-20261031.md):
+   4 клиента, 14106 rounds, quota isolation, restart-free и cleanup.
    Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
 8. **Начат резерв:** [реальная OpenWrt VM](clean-vpn-openwrt-vm.md),
