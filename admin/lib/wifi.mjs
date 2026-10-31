@@ -7,8 +7,27 @@ export class Wifi{
  constructor({file,interface:iface,clientDirectory,run=command}){need(/^[a-zA-Z0-9_-]{1,15}$/.test(iface),'wifi_interface');this.file=file;this.iface=iface;this.clientDirectory=clientDirectory;this.run=run;this.profiles=readJson(file,[]);need(Array.isArray(this.profiles)&&this.profiles.length<=256,'wifi_state');}
  async cli(args,{raw=false,...options}={}){const {out}=await this.run('/usr/sbin/wpa_cli',['-i',this.iface,...(this.clientDirectory?['-s',this.clientDirectory]:[]),...args],options);return raw?out:out.trim();}
  list(){return this.profiles.map(({psk,...p})=>({...p,hasPassword:!!psk}));}
+ async catalog(){
+  const rows=this.list().map(p=>({...p,source:'admin',readOnly:false}));
+  try{
+   const networks=(await this.cli(['list_networks'],{raw:true})).split(/\r?\n/).slice(1,257);
+   for(const line of networks){
+    const [n,name,,flags='']=line.split('\t');if(!/^\d+$/.test(n))continue;
+    const tag=await this.cli(['get_network',n,'id_str']);if(/^"mpn-admin-[a-f0-9]{24}"$/.test(tag))continue;
+    const ssid=decodeWifiSsid(name);if(ssid===null)continue;
+    rows.push({id:'system-'+n,networkId:n,ssid,priority:null,enabled:!flags.includes('[DISABLED]'),source:'system',readOnly:true});
+   }
+  }catch{} // Saved editable profiles remain usable if the daemon is unavailable.
+  return rows;
+ }
+ async summary(){
+  const [s,scan]=await Promise.all([this.status(),this.cli(['scan_results'],{raw:true})]);
+  let profileId=null;
+  if(/^\d+$/.test(s.id??'')){const tag=await this.cli(['get_network',s.id,'id_str']);profileId=/^"mpn-admin-([a-f0-9]{24})"$/.exec(tag)?.[1]??null;}
+  return{...s,profileId,observedSsids:[...new Set(wifiScanNetworks(scan).map(n=>n.ssid))]};
+ }
  async status(){const values=Object.fromEntries((await this.cli(['status'],{raw:true})).split(/\r?\n/).filter(l=>l.includes('=')).map(l=>{const i=l.indexOf('=');return[l.slice(0,i),l.slice(i+1)];}));if('ssid'in values)values.ssid=decodeWifiSsid(values.ssid);return Object.fromEntries(['wpa_state','ssid','bssid','ip_address','id'].filter(k=>k in values).map(k=>[k,values[k]]));}
- async scan(){need(await this.cli(['scan'])==='OK','wifi_scan_failed');await new Promise(r=>setTimeout(r,1800));return wifiScanNetworks(await this.cli(['scan_results'],{raw:true}),this.profiles);}
+ async scan(){need(await this.cli(['scan'])==='OK','wifi_scan_failed');await new Promise(r=>setTimeout(r,1800));return wifiScanNetworks(await this.cli(['scan_results'],{raw:true}),await this.catalog());}
  save(p){exact(p,['id','ssid','security','password','priority','enabled','hidden']);need(p.id===undefined||id(p.id),'wifi_id');const old=this.profiles.find(x=>x.id===p.id);need(p.id===undefined||old,'wifi_not_found',404);need(validWifiSsid(p.ssid),'wifi_ssid');need(['open','wpa2'].includes(p.security),'wifi_security');need(Number.isInteger(p.priority)&&Math.abs(p.priority)<=1000&&typeof p.enabled==='boolean'&&typeof p.hidden==='boolean','wifi_options');let psk;
  if(p.security==='wpa2'){if(p.password){need(typeof p.password==='string'&&/^[\x20-\x7e]{8,63}$/.test(p.password),'wifi_password');psk=pbkdf2Sync(p.password,p.ssid,4096,32,'sha1').toString('hex');}else{need(old?.psk&&old.ssid===p.ssid,'wifi_password_required');psk=old.psk;}}
  const item={id:old?.id??randomBytes(12).toString('hex'),ssid:p.ssid,security:p.security,priority:p.priority,enabled:p.enabled,hidden:p.hidden,...(psk?{psk}:{})};need(old||this.profiles.length<256,'wifi_profile_limit');const next=this.profiles.filter(x=>x.id!==item.id).concat(item);atomic(this.file,next);this.profiles=next;this.synced=false;return this.list();}

@@ -56,3 +56,26 @@ test('restart upgrades existing profiles to directed scans; daemon loss restores
  assert.equal(calls.filter(x=>x.input).length,3);
  assert(!calls.some(x=>x.cmd.includes('remove_network')));
 });
+
+test('system catalog is read-only and summaries separate a connection from last observed SSIDs',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-wifi-system-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const calls=[];let ownedId;
+ const run=async(_file,args)=>{
+  const cmd=args.slice(2);calls.push(cmd);
+  if(cmd[0]==='list_networks')return{out:'network id / ssid / bssid / flags\n0\tHome router\tany\t\n1\tGuests\tany\t[DISABLED]\n7\tPhone\tany\t[CURRENT]\n'};
+  if(cmd[0]==='get_network'){assert.equal(cmd[2],'id_str');return{out:cmd[1]==='7'?'"mpn-admin-'+ownedId+'"':'"foreign"'};}
+  if(cmd[0]==='status')return{out:'wpa_state=COMPLETED\nssid=Phone\nid=7\nip_address=192.0.2.8\n'};
+  if(cmd[0]==='scan_results')return{out:'bssid / frequency / signal level / flags / ssid\n00:11:22:33:44:55\t2412\t-43\t[ESS]\tHome router\n'};
+  throw Error('unexpected command');
+ };
+ const wifi=new Wifi({file:dir+'/profiles.json',interface:'wlan0',run});
+ wifi.save({ssid:'Phone',security:'wpa2',password:'do-not-export',priority:5,enabled:true,hidden:false});ownedId=wifi.list()[0].id;
+ const catalog=await wifi.catalog();assert.equal(catalog.length,3);
+ assert.equal(catalog[0].source,'admin');assert.equal(catalog[0].readOnly,false);
+ assert.deepEqual(catalog.find(p=>p.ssid==='Home router'),{id:'system-0',networkId:'0',ssid:'Home router',priority:null,enabled:true,source:'system',readOnly:true});
+ assert.equal(catalog.find(p=>p.ssid==='Guests').enabled,false);
+ assert(!JSON.stringify(catalog).includes('do-not-export'));assert(!JSON.stringify(catalog).includes('psk'));
+ const summary=await wifi.summary();assert.equal(summary.profileId,ownedId);assert.equal(summary.ssid,'Phone');
+ assert.deepEqual(summary.observedSsids,['Home router']);
+ assert(calls.every(c=>['list_networks','get_network','status','scan_results'].includes(c[0])));
+});

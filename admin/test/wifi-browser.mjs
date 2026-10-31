@@ -10,11 +10,13 @@ import {createAdmin} from '../server.mjs';
 const state=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-wifi-browser-'));
 const profile={id:'remembered-id',ssid:'Saved <hidden>',security:'wpa2',priority:7,enabled:true,hidden:false,hasPassword:true};
 const capabilities={role:'client',wifi:true,guardToggle:false,networkOwner:false,profileImport:false,observer:false,vpnSettings:false,hostnameChange:false,probes:[]};
+const system={id:'system-0',networkId:'0',ssid:'Home router',priority:null,enabled:true,source:'system',readOnly:true};
+const absent={id:'absent',ssid:'Absent',priority:0,enabled:false,hidden:false,security:'open'};
 let job=null;const saves=[];
 const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(r=>reservation.close(r));
 const app=await createAdmin({state,address:'127.0.0.1',subnet:'127.0.0.0/8',port,lab:true},{rpc:async(route,p)=>{
- if(route==='/settings')return{hostname:'mpn',adminUrl:'/',vpn:{role:'client',transport:'combo-tls'},dns:{mode:'tunnel',upstreams:'fixture'},profiles:[],wifi:[profile],capabilities};
- if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},cpu:[],network:[],uptimeSeconds:1},vpn:{ActiveState:'active'},network:null,guard:{active:true},wifi:{},jobs:job?[job]:[],capabilities};
+ if(route==='/settings')return{hostname:'mpn',adminUrl:'/',vpn:{role:'client',transport:'combo-tls'},dns:{mode:'tunnel',upstreams:'fixture'},profiles:[],wifi:[profile,system,absent],capabilities};
+ if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},cpu:[],network:[],uptimeSeconds:1},vpn:{ActiveState:'active'},network:null,guard:{active:true},wifi:{wpa_state:'COMPLETED',ssid:profile.ssid,id:'7',profileId:profile.id,observedSsids:['Home router']},jobs:job?[job]:[],capabilities};
  if(route==='/wifi/scan'){job={id:'scan',kind:'wifi-scan',status:'passed',result:[{ssid:profile.ssid,source:'saved',savedId:profile.id,observed:false,security:'wpa2',signal:null}]};return job;}
  if(route==='/wifi/save'){saves.push(p);job={id:'save',kind:'wifi-save',status:'passed',result:[profile]};return job;}
  throw Error('unexpected_route');
@@ -29,6 +31,15 @@ try{
  await page.goto(url);await page.type('#login-password','wifi fixture password');await page.$eval('#login-form',f=>f.requestSubmit());
  await page.waitForFunction(()=>!document.querySelector('#dashboard').hidden);
  assert.equal(await page.$eval('#wifi-hidden',e=>e.hidden),true);
+ await page.waitForFunction(()=>document.querySelector('#wifi-profiles').textContent.includes('Подключена'));
+ const rows=await page.$$eval('#wifi-profiles tr',rs=>rs.map(r=>({cells:[...r.querySelectorAll('td')].map(c=>c.textContent),buttons:r.querySelectorAll('button').length})));
+ assert.equal(rows.length,3);
+ assert.deepEqual(rows.map(r=>r.cells[2]),['Включено','Включено','Выключено']);
+ assert.deepEqual(rows.map(r=>r.cells[3]),['Подключена','Доступна','Недоступна']);
+ assert.equal(rows[1].buttons,0);assert.equal(rows[1].cells[4],'Системный профиль');
+ const headings=await page.$$eval('#wifi th',ts=>ts.map(t=>t.textContent));
+ assert(headings.includes('Автоподключение'));assert(headings.includes('Статус'));
+
  await page.click('#wifi-scan');
  await page.waitForFunction(()=>document.querySelector('#wifi-nearby').options.length===2);
  const label=await page.$eval('#wifi-nearby',e=>e.options[1].textContent);
