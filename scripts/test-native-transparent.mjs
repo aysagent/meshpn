@@ -18,7 +18,7 @@ test('native transparent codec and end-to-end TLS transcript restoration', { tim
     const result = spawnSync(exe, args, { encoding: 'utf8', timeout: 20000, maxBuffer: 65536 });
     assert.equal(result.status, 0, `${result.error ?? ''}\n${result.stdout}\n${result.stderr}`);
     if (!args.length) assert.match(result.stdout, /10000 mutations, HRR gates/);
-    else if (exe === binary) assert.equal((result.stdout.match(/native transparent TLS PASS/g) ?? []).length, 9);
+    else if (exe === binary) assert.equal((result.stdout.match(/native transparent TLS PASS/g) ?? []).length, 12);
     else assert.match(result.stdout, /native transparent sockets PASS/);
     console.log(result.stdout.trim());
   }

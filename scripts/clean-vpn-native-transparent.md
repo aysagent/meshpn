@@ -47,9 +47,13 @@ transparent/combo**: [native combo engine](clean-vpn-native-combo.md) добав
 
 `transparent_auth.hpp` использует pinned BoringSSL, не свою реализацию криптографии:
 
-- Отдельный native формат `n1.<base32 labels>.<public-name>`, без требования
-  совместимости со старым Node enc-SNI v2. Lowercase base32 без padding,
-  канонические разрезы labels по 63 символа; смена регистра не обходит replay.
+- Native формат `n2.<base62 labels>.<public-name>` использует алфавит JS
+  `0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ` и разрезы
+  labels по 63 символа. Base62 payload чувствителен к регистру, public-name — нет.
+  Exit также читает прежний `n1` Base32; повторное кодирование одного ciphertext
+  в другой формат не обходит replay. Обновлять exit раньше client.
+  Совпадение кодека не означает wire-совместимость с JS enc-SNI v2:
+  аутентифицированный native payload сохраняет IPv4 и hash ClientHello.
 - AES-256-GCM, случайный nonce 12 bytes и полный tag 16 bytes. Ключ выводится
   HMAC-SHA256 из 32-byte PSK с domain separation; public-name включён в контекст
   ключа и AAD. Derived key очищается после создания AEAD context.
@@ -69,8 +73,11 @@ transparent/combo**: [native combo engine](clean-vpn-native-combo.md) добав
   `public-https`. Private/loopback допустимы только в явном allowlist, не в
   публичном режиме. DNS lookup назначения отсутствует в обоих режимах.
 
-Длина DNS hostname ограничена 253 bytes. Для public-name `relay.example`
-этот формат вмещает исходный SNI до 69 bytes. Более длинное имя или невозможный
+Длина DNS hostname ограничена 253 bytes. Base62 устраняет прежнее отклонение
+72-символьных origin SNI из-за накладных расходов Base32. Размер ciphertext
+равен `76 + origin SNI bytes`; окончательная длина зависит также от public-name
+и ведущих нулей nonce. Это всё ещё более короткий диапазон, чем у JS payload.
+Не вмещающееся имя или невозможный
 record resize **отклоняются**, а не обрезаются и не отправляются напрямую.
 Защищённый fallback через boring-tls ещё должен быть подключён отдельно.
 Формат является новым проектным протоколом, не прошедшим независимый crypto-аудит.

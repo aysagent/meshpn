@@ -8,6 +8,7 @@
 #include <openssl/sha.h>
 #include <map>
 #include <mutex>
+#include <string_view>
 
 namespace cvpn::transparent {
 inline std::string lowercase(std::string s) {
@@ -35,6 +36,38 @@ inline Bytes unbase32(const std::string& text) {
   }
   require(base32(out) == text, "relay_token_encoding"); return out;
 }
+// Same alphabet and leading-zero convention as the JS enc-SNI implementation.
+inline std::string base62(const Bytes& bytes) {
+  constexpr char alphabet[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  if (bytes.empty()) return {};
+  if (std::all_of(bytes.begin(),bytes.end(),[](uint8_t b){return b==0;})) return std::string(bytes.size(),'0');
+  std::vector<unsigned> digits{0};
+  for (uint8_t byte : bytes) {
+    unsigned carry = byte;
+    for (auto& digit : digits) { carry += digit << 8; digit = carry % 62; carry /= 62; }
+    while (carry) { digits.push_back(carry % 62); carry /= 62; }
+  }
+  std::string out;
+  for (uint8_t byte : bytes) { if (byte) break; out += '0'; }
+  for (auto it = digits.rbegin(); it != digits.rend(); ++it) out += alphabet[*it];
+  return out;
+}
+inline Bytes unbase62(const std::string& text) {
+  require(!text.empty() && text.size() <= 253, "relay_token_encoding");
+  if (std::all_of(text.begin(),text.end(),[](char c){return c=='0';})) return Bytes(text.size(),0);
+  constexpr char alphabet[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  Bytes bytes{0};
+  for (char c : text) {
+    const auto at = std::string_view(alphabet).find(c);
+    require(at != std::string::npos, "relay_token_encoding"); unsigned carry = unsigned(at);
+    for (auto& byte : bytes) { carry += unsigned(byte) * 62; byte = carry & 255; carry >>= 8; }
+    while (carry) { bytes.push_back(carry & 255); carry >>= 8; }
+  }
+  Bytes out;
+  for (char c : text) { if (c != '0') break; out.push_back(0); }
+  out.insert(out.end(),bytes.rbegin(),bytes.rend());
+  require(base62(out) == text, "relay_token_encoding"); return out;
+}
 inline void push64(Bytes& b, uint64_t value) { for (int i = 7; i >= 0; --i) b.push_back(value >> (i * 8)); }
 inline uint64_t read64(const Bytes& b, size_t at) {
   require(at <= b.size() && b.size() - at >= 8, "relay_token_format");
@@ -47,20 +80,26 @@ class SniAuthorization {
   Digest replay_scope_{};
   bssl::UniquePtr<EVP_AEAD_CTX> aead_;
   std::string encode(const Bytes& wire) const {
-    const auto text = base32(wire); std::string out = "n1";
+    const auto text = base62(wire); std::string out = "n2";
     for (size_t at = 0; at < text.size(); at += 63) out += "." + text.substr(at, 63);
     out += "." + suffix_;
     require(hostname(out), "relay_token_hostname_limit"); return out;
   }
   Bytes decode(std::string sni) const {
-    require(hostname(sni), "relay_token_hostname"); sni = lowercase(std::move(sni));
+    require(hostname(sni), "relay_token_hostname");
     const std::string suffix = "." + suffix_;
-    require(sni.size() > suffix.size() + 3 && sni.compare(0, 3, "n1.") == 0 &&
-            sni.compare(sni.size() - suffix.size(), suffix.size(), suffix) == 0, "relay_token_suffix");
+    const bool legacy=lowercase(sni.substr(0,3))=="n1.";
+    require(sni.size() > suffix.size() + 3 && (legacy||sni.compare(0,3,"n2.")==0) &&
+            lowercase(sni.substr(sni.size()-suffix.size()))==suffix, "relay_token_suffix");
     std::string text;
     for (size_t i = 3; i < sni.size() - suffix.size(); ++i) if (sni[i] != '.') text += sni[i];
-    auto wire = unbase32(text);
-    require(encode(wire) == sni, "relay_token_encoding"); return wire;
+    auto wire=legacy?unbase32(lowercase(text)):unbase62(text);
+    std::string canonical=legacy?"n1":"n2";
+    const auto encoded=legacy?base32(wire):base62(wire);
+    for(size_t at=0;at<encoded.size();at+=63)canonical+="."+encoded.substr(at,63);
+    canonical+=suffix;
+    const auto normalized=(legacy?lowercase(sni.substr(0,sni.size()-suffix.size())):sni.substr(0,sni.size()-suffix.size()))+suffix;
+    require(canonical==normalized,"relay_token_encoding");return wire;
   }
 public:
   SniAuthorization(const Digest& secret, std::string public_name) : suffix_(lowercase(std::move(public_name))) {
@@ -87,7 +126,7 @@ public:
     OPENSSL_cleanse(pt.data(),pt.size()); return ok;
   }
 
-  // n1 is a new native wire format, independent of legacy Node enc-SNI v2.
+  // n2 uses the compact JS Base62 codec; n1 remains read-compatible on exit.
   // Authenticate the ORIGINAL record prefix as well as destination and SNI.
   Bytes seal(const Hello& hello, const Destination& dst, uint64_t wall) const {
     require(dst.port != 0, "relay_destination");
