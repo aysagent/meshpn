@@ -57,7 +57,7 @@ async function broker(t){
   if(file==='/usr/bin/systemctl'){
    if(args[0]==='show')return{out:`Type=notify\nActiveState=${args[1]==='network.service'?owner:active}\nSubState=running\nMainPID=42\nStatusText=ready\n`};
    if(args[0]==='stop'){assert.equal(readJson(bundle+'/config.json').transport==='combo-tls',!!readJson(bundle+'/network.json').combo_redirect);active=owner='inactive';}
-   if(args[0]==='start'){if(args[1]==='network.service')owner='active';else active='active';}
+   if(args[0]==='start'){if(args[1]==='network.service'){owner='active';setImmediate(()=>{active='active';});}else throw Error('engine_started_before_owner_prepared');}
   }
   return{out:''};
  };

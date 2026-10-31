@@ -55,7 +55,8 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
   guard:async()=>need((await guard()).active,'enable_guard_first',409),
   running:async()=>{const s=await nativeState();need(s.Type==='notify'&&['active','activating','inactive','failed'].includes(s.ActiveState),'vpn_service_transition',409);return ['active','activating'].includes(s.ActiveState);},
   stop:async()=>{transportPhase('stopping-network');await run('/usr/bin/systemctl',['stop',c.vpnUnit,activationUnit],{timeout:210000});},
-  start:async()=>{transportPhase('starting-network');await run('/usr/bin/systemctl',['start',activationUnit],{timeout:60000});transportPhase('waiting-tunnel');await run('/usr/bin/systemctl',['start',c.vpnUnit],{timeout:60000});}
+  start:async()=>{transportPhase('starting-network');await run('/usr/bin/systemctl',['start',activationUnit],{timeout:60000});transportPhase('waiting-tunnel');},
+  ready:async()=>{const deadline=performance.now()+60000;let error;do{try{await service.ready();return;}catch(e){error=e;}await delay(500);}while(performance.now()<deadline);throw error;}
  }):null;
  let recovery;try{const mode=await transportTransaction?.recover();const regular=await transaction.recover();recovery=mode&&mode.status!=='none'?mode:regular;}catch(e){recovery={status:'blocked',error:safeError(e)};}
  const pendingTransaction=()=>{try{return !!transaction.load()||!!transportTransaction?.load();}catch{return true;}};
@@ -67,14 +68,17 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
    if(c.networkUnit){const binds=(await run('/usr/bin/systemctl',['show',c.vpnUnit,'-p','BindsTo','--value'])).out.trim().split(/\s+/);need(binds.includes(c.networkUnit)&&binds.includes(c.guardUnit),'network_owner_binding_required',409);}
   }
   // A healthy network owner need not tear down routes/DNS to restart its engine.
-  const restartEngine=action==='restart'&&c.networkUnit&&(await unit(c.networkUnit)).ActiveState==='active';
+  const ownerWasActive=c.networkUnit&&(await unit(c.networkUnit)).ActiveState==='active';
+  const restartEngine=action==='restart'&&ownerWasActive;
   phase(restartEngine?'restarting-engine':action==='stop'?'stopping-network':'starting-network');
   await run('/usr/bin/systemctl',[action,restartEngine?c.vpnUnit:activationUnit],{timeout:210000});
   if(c.networkUnit&&action!=='stop'){
    // Starting an already-active owner is a systemd no-op. Recovery or an
    // explicit engine stop can leave that owner alive with the engine stopped.
    // Queue only a start: a healthy engine must keep its existing connection.
-   phase('starting-engine');await run('/usr/bin/systemctl',['start','--no-block',c.vpnUnit],{timeout:15000});
+   // A freshly exec'd owner is not network-ready yet. It starts the engine
+   // itself after preparing TUN/DNS/routes; starting it here races preflight.
+   if(ownerWasActive){phase('starting-engine');await run('/usr/bin/systemctl',['start','--no-block',c.vpnUnit],{timeout:15000});}
    phase('waiting-tunnel');
    const deadline=performance.now()+60000;let error;
    do{try{await service.ready();return unit(c.vpnUnit);}catch(e){error=e;}await delay(500);}while(performance.now()<deadline);

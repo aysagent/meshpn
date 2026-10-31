@@ -131,7 +131,7 @@ test('standalone admin controls network owner and keeps engine identity for read
   t.after(()=>broker.close());
   const action=async a=>{await broker.dispatch('/vpn/action',{action:a});for(let i=0;i<100;i++){await new Promise(r=>setImmediate(r));const s=await broker.dispatch('/status');if(s.jobs[0].status!=='running')return s.jobs[0];}throw Error('job_timeout');};
   for(const a of ['stop','start','restart'])assert.equal((await action(a)).status,'passed');
-  assert.deepEqual(calls.filter(c=>c[0]==='/usr/bin/systemctl'&&['start','stop','restart'].includes(c[1])).map(c=>c.slice(1)),[['stop','native-network.service'],['start','native-network.service'],['start','--no-block',f.options.unit],['restart',f.options.unit],['start','--no-block',f.options.unit]]);
+  assert.deepEqual(calls.filter(c=>c[0]==='/usr/bin/systemctl'&&['start','stop','restart'].includes(c[1])).map(c=>c.slice(1)),[['stop','native-network.service'],['start','native-network.service'],['restart',f.options.unit],['start','--no-block',f.options.unit]]);
   const status=await broker.dispatch('/status');assert.equal(status.network.ActiveState,'active');assert.equal(status.capabilities.networkOwner,true);
   bindings='guard.service';const before=calls.filter(c=>c[1]==='restart').length;
   assert.equal((await action('restart')).error,'network_owner_binding_required');assert.equal(calls.filter(c=>c[1]==='restart').length,before);
