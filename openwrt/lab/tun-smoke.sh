@@ -1,6 +1,6 @@
 #!/bin/sh
 # ONLY inside the NIC-less disposable VM. No physical machine invocation.
-set -eu
+set -eux
 test "$(ls /sys/class/net)" = lo
 test "$(cat /proc/1/comm)" = procd
 media=/mnt/cvpn-payload
@@ -75,6 +75,67 @@ for protocol in 2 1.1; do
  done
  printf 'CVPN_OPENWRT_NORMAL_TUN_%s=passed\n' "$protocol"
 done
+# Actual normal engines under procd, distinct from the initial sleep fixture.
+# This temporary service is not an installed network owner or production adapter.
+cat >/etc/init.d/clean-vpn-native-lab <<EOF
+#!/bin/sh /etc/rc.common
+USE_PROCD=1
+START=99
+start_service() {
+ procd_open_instance exit
+ procd_set_param command "$engine" --config "$work/tun-exit-2.json" --service
+ procd_set_param respawn 3600 1 3
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_close_instance
+ procd_open_instance client
+ procd_set_param command "$engine" --config "$work/tun-client.json" --service
+ procd_set_param respawn 3600 1 3
+ procd_set_param stdout 1
+ procd_set_param stderr 1
+ procd_close_instance
+}
+EOF
+chmod 755 /etc/init.d/clean-vpn-native-lab
+/etc/init.d/clean-vpn-native-lab start
+native_pid() {
+ ubus -t 5 call service list '{"name":"clean-vpn-native-lab"}' | jsonfilter -e "@[\"clean-vpn-native-lab\"].instances.$1.pid"
+}
+packet_ready() {
+ count=0
+ until ping -I 10.99.0.2 -c 1 -W 1 198.18.0.80; do
+  count=$((count+1)); test "$count" -lt 15
+  sleep 1
+ done
+}
+packet_ready
+ubus -t 5 call service list '{"name":"clean-vpn-native-lab"}'
+old_client=$(native_pid client); supervised_exit=$(native_pid exit)
+test -n "$old_client"; test -n "$supervised_exit"
+kill -KILL "$old_client"
+count=0
+while :; do
+ # A missing PID is expected between reap and respawn; jsonfilter returns 1.
+ new_client=$(native_pid client || true)
+ if test -n "$new_client" && test "$new_client" != "$old_client"; then break; fi
+ count=$((count+1)); test "$count" -lt 15
+ sleep 1
+done
+test ! -e "/proc/$old_client"
+test -e "/proc/$new_client"
+test "$(native_pid exit)" = "$supervised_exit"
+packet_ready
+/etc/init.d/clean-vpn-native-lab stop
+count=0
+while test -e "/proc/$new_client" || test -e "/proc/$supervised_exit"; do
+ count=$((count+1)); test "$count" -lt 10
+ sleep 1
+done
+test -z "$(native_pid client)"; test -z "$(native_pid exit)"
+test ! -e "/proc/$new_client"; test ! -e "/proc/$supervised_exit"
+if ping -I 10.99.0.2 -c 1 -W 1 198.18.0.80; then echo procd_stop_negative_failed; exit 1; fi
+rm /etc/init.d/clean-vpn-native-lab
+printf 'CVPN_OPENWRT_NATIVE_PROCD=passed\n'
 ip rule add pref 0 lookup local
 for pref in 10 11 100 101 1000; do ip rule del pref "$pref"; done
 ip route flush table 100

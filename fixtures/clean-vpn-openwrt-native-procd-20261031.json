@@ -1,0 +1,119 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-openwrt-native-procd",
+  "date": "2026-10-31",
+  "status": "passed",
+  "architecture": "amd64",
+  "engineSource": "generic Alpine static, not SDK package",
+  "vm": {
+    "schema": 1,
+    "kind": "clean-vpn-openwrt-vm-smoke",
+    "status": "passed",
+    "architecture": "amd64",
+    "source": "https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-generic-ext4-combined.img.gz",
+    "downloadSha256": "f8538784d0288b4133a99ac2a68443e4922ffde6343e80df56a5882364b9d499",
+    "kernelSha256": "8f70595f3a6eec3112e007450a1a600153904deffa52ab368712342583cb387c",
+    "diskSha256": "27d6a99117a6d9c2a8eedbfda0f8baa7a3149f7ddfa168f4bb0ae13815130162",
+    "qemuImage": {
+      "id": "fe1f0a4ecacd161717dc718d9f9b203dffed776b90e20e23a60b383bbb1fe546",
+      "architecture": "arm64"
+    },
+    "scope": "real OpenWrt procd/UCI, native fixture FD and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance",
+    "payloadSha256": "4e1910ede77ba27da8e3cb0c64369d05b9d8cce54cb84cf23f19d012cdbb36e2",
+    "hostNetworkChanged": false,
+    "physicalHostsTouched": false,
+    "guestNic": false,
+    "hostShare": false,
+    "persistentGuestDisk": false,
+    "globalBinfmtChanged": false,
+    "releaseSignatureVerified": false,
+    "timing": "QEMU TCG functional boot only; not performance evidence",
+    "exitCode": 0,
+    "containerState": {
+      "OOMKilled": false,
+      "ExitCode": 0,
+      "Error": ""
+    },
+    "guestPackageInstalled": false,
+    "normalTunPassed": true,
+    "nativeProcdPassed": true,
+    "checks": [
+      "official-image-hash",
+      "x86_64-OpenWrt-procd-PID1",
+      "guest-loopback-only",
+      "real-ubus-system-board",
+      "UCI-write-read-commit",
+      "procd-owned-fixture-start",
+      "SIGKILL-respawn-new-PID",
+      "procd-stop-and-cleanup",
+      "local-payload-hash",
+      "native-FD-fixture-passed",
+      "normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls",
+      "normal-engine-procd-start-SIGKILL-new-client-PID-unchanged-exit-packets-restored-stop-no-packets"
+    ],
+    "elapsedMs": 55293,
+    "consoleSha256": "29810ca534c35163bce4f396c8761221a31cefdbdf299edda0b663c45dbfbf28",
+    "logTail": " data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=2.688 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 1 packets received, 0% packet loss\r\nround-trip min/avg/max = 2.688/2.688/2.688 ms\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n{\r\n\t\"clean-vpn-native-lab\": {\r\n\t\t\"instances\": {\r\n\t\t\t\"client\": {\r\n\t\t\t\t\"running\": true,\r\n\t\t\t\t\"pid\": 2842,\r\n\t\t\t\t\"command\": [\r\n\t\t\t\t\t\"/mnt/cvpn-payload/engine\",\r\n\t\t\t\t\t\"--config\",\r\n\t\t\t\t\t\"/tmp/cvpn-openwrt-native/tun-client.json\",\r\n\t\t\t\t\t\"--service\"\r\n\t\t\t\t],\r\n\t\t\t\t\"term_timeout\": 5,\r\n\t\t\t\t\"respawn\": {\r\n\t\t\t\t\t\"threshold\": 3600,\r\n\t\t\t\t\t\"timeout\": 1,\r\n\t\t\t\t\t\"retry\": 3\r\n\t\t\t\t}\r\n\t\t\t},\r\n\t\t\t\"exit\": {\r\n\t\t\t\t\"running\": true,\r\n\t\t\t\t\"pid\": 2841,\r\n\t\t\t\t\"command\": [\r\n\t\t\t\t\t\"/mnt/cvpn-payload/engine\",\r\n\t\t\t\t\t\"--config\",\r\n\t\t\t\t\t\"/tmp/cvpn-openwrt-native/tun-exit-2.json\",\r\n\t\t\t\t\t\"--service\"\r\n\t\t\t\t],\r\n\t\t\t\t\"term_timeout\": 5,\r\n\t\t\t\t\"respawn\": {\r\n\t\t\t\t\t\"threshold\": 3600,\r\n\t\t\t\t\t\"timeout\": 1,\r\n\t\t\t\t\t\"retry\": 3\r\n\t\t\t\t}\r\n\t\t\t}\r\n\t\t}\r\n\t}\r\n}\r\n+ native_pid client\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.client.pid'\r\n+ old_client=2842\r\n+ native_pid exit\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.exit.pid'\r\n+ supervised_exit=2841\r\n+ test -n 2842\r\n+ test -n 2841\r\n+ kill -KILL 2842\r\n+ count=0\r\n+ :\r\n+ native_pid client\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.client.pid'\r\n+ true\r\n+ new_client=\r\n+ test -n \r\n+ count=1\r\n+ test 1 -lt 15\r\n+ sleep 1\r\n+ :\r\n+ native_pid client\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.client.pid'\r\n+ new_client=2881\r\n+ test -n 2881\r\n+ test 2881 '!=' 2842\r\n+ break\r\n+ test '!' -e /proc/2842\r\n+ test -e /proc/2881\r\n+ native_pid exit\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.exit.pid'\r\n+ test 2841 '=' 2841\r\n+ packet_ready\r\n+ count=0\r\n+ ping -I 10.99.0.2 -c 1 -W 1 198.18.0.80\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n64 bytes from 198.18.0.80: seq=0 ttl=64 time=2.376 ms\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 1 packets received, 0% packet loss\r\nround-trip min/avg/max = 2.376/2.376/2.376 ms\r\n+ /etc/init.d/clean-vpn-native-lab stop\r\n+ count=0\r\n+ test -e /proc/2881\r\n+ count=1\r\n+ test 1 -lt 10\r\n+ sleep 1\r\n+ test -e /proc/2881\r\n+ test -e /proc/2841\r\n+ native_pid client\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.client.pid'\r\n+ test -z \r\n+ native_pid exit\r\n+ ubus -t 5 call service list '{\"name\":\"clean-vpn-native-lab\"}'\r\n+ jsonfilter -e '@[\"clean-vpn-native-lab\"].instances.exit.pid'\r\n+ test -z \r\n+ test '!' -e /proc/2881\r\n+ test '!' -e /proc/2841\r\n+ ping -I 10.99.0.2 -c 1 -W 1 198.18.0.80\r\nPING 198.18.0.80 (198.18.0.80) from 10.99.0.2: 56 data bytes\r\n\r\n--- 198.18.0.80 ping statistics ---\r\n1 packets transmitted, 0 packets received, 100% packet loss\r\n+ rm /etc/init.d/clean-vpn-native-lab\r\n+ printf 'CVPN_OPENWRT_NATIVE_PROCD=passed\\n'\r\nCVPN_OPENWRT_NATIVE_PROCD=passed\r\n+ ip rule add pref 0 lookup local\r\n+ ip rule del pref 10\r\n+ ip rule del pref 11\r\n+ ip rule del pref 100\r\n+ ip rule del pref 101\r\n+ ip rule del pref 1000\r\n+ ip route flush table 100\r\n+ ip route flush table 101\r\n+ ip addr del 10.99.0.2/32 dev lo\r\n+ ip addr del 198.18.0.80/32 dev lo\r\n+ /mnt/cvpn-payload/tun-device delete cvctun0\r\n+ /mnt/cvpn-payload/tun-device delete cvetun0\r\n+ uci delete firewall.cvpn_lab\r\n+ uci commit firewall\r\n+ /etc/init.d/firewall reload\r\n+ ls /sys/class/net\r\n+ test lo '=' lo\r\n+ printf 'CVPN_OPENWRT_NORMAL_TUN=passed\\n'\r\nCVPN_OPENWRT_NORMAL_TUN=passed\r\nCVPN_OPENWRT_NATIVE=passed\r\n+ umount /mnt/cvpn-payload\r\n[   53.378625] EXT4-fs (vdb): unmounting filesystem 085317e3-930f-49e0-aa9b-eab43f8286fb.\r\n\r\nCVPN_OPENWRT_RESULT=0\r\n[   53.416299] ACPI: PM: Preparing to enter system sleep state S5\r\n[   53.417745] reboot: Power down\r\n",
+    "cleanup": "owned-container-removed; disk remains pristine; snapshot discarded"
+  },
+  "payload": {
+    "schema": 1,
+    "kind": "openwrt-native-lab-payload",
+    "architecture": "amd64",
+    "binaries": {
+      "engine": {
+        "sha256": "a6eec6c9f185a4fa1f57ae7862719fb7a3c3c0eabfdc41dd12fceabf0dbfd3bd",
+        "bytes": 6624312
+      },
+      "fixture": {
+        "sha256": "ba15cb9112a0ddb1f69f816868c69b68fb875109a94a5ecd9edf026cb1b8cbf7",
+        "bytes": 7507408
+      },
+      "integration": {
+        "sha256": "dc3a025f1b3d06228bf0150cc830a2fd95e863f90bcba47ba223897d18e18d46",
+        "bytes": 2740024
+      },
+      "tun-device": {
+        "sha256": "893183807fb6e4a2d805fa6ba8408edb2374419d33a08429d9eb51871355e8e3",
+        "bytes": 99536
+      }
+    },
+    "profileSha256": "baaf251e0de975de15d1d501b2630235f3210fe15efe49e3dfcb326e72d99e2f",
+    "packageSha256": null,
+    "tun": {
+      "moduleSha256": "7cd0d957458e6feb37afffed1a972532977bbb4a5acc1349a7aeb2366a91a074",
+      "indexSha256": "ce8105f6fe7a6070c5964fd02174d637606ccf96d6d8f42078e6efe726a0c6cb",
+      "scriptSha256": "22296e7e833303f6c24c0e3acb9b3ec2036650967adc26d7d4136e20c7cc0ee7"
+    },
+    "credentials": "fresh-test-only-never-production",
+    "scope": "static engine and fixture FD TLS plus normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI/browser-equivalence claim"
+  },
+  "testSources": {
+    "openwrt/lab/tun-smoke.sh": "22296e7e833303f6c24c0e3acb9b3ec2036650967adc26d7d4136e20c7cc0ee7",
+    "scripts/clean-vpn-openwrt-vm-smoke.mjs": "a09a6e80d1cc992557e4e02de12ea4d0190fb9328957a324cc192580bc353790"
+  },
+  "checks": [
+    "normal H1/H2 TUN gates repeated",
+    "two real normal native instances managed by procd",
+    "initial packet request passes",
+    "client SIGKILL followed by different procd PID",
+    "old client process reaped",
+    "exit PID unchanged",
+    "packet request passes after respawn",
+    "procd stop removes both native PIDs",
+    "packet request after stop fails",
+    "owned service/network state cleaned, snapshot discarded"
+  ],
+  "harnessCorrection": {
+    "firstAttempts": "failed after client SIGKILL because jsonfilter returns 1 during the expected PID-free respawn interval; set -e aborted assignment",
+    "evidence": "instrumented second attempt records live instances and failure exactly at new_client assignment",
+    "fix": "allow empty PID only while polling, keep bounded deadline, distinct new PID, old PID removal, unchanged exit and packet checks",
+    "productionEngineChanged": false
+  },
+  "limitations": [
+    "temporary fixture service, not installed UCI/netifd/fw4/DNS owner",
+    "no WAN/NAT/DNS/kill-switch/reboot acceptance",
+    "no LuCI or physical router",
+    "no performance evidence"
+  ]
+}

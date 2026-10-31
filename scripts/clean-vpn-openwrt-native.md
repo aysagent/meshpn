@@ -69,6 +69,23 @@ Helper — static ELF соответствующей архитектуры. She
 Пока не проверены WAN/NAT, DNS/kill switch, netifd ownership и reboot recovery,
 LuCI/rpcd/capture/observer. TUN тест в одной VM не закрывает эти пункты.
 
+## Дополнение: normal engines под procd
+
+Следующий [отдельный прогон](../fixtures/clean-vpn-openwrt-native-procd-20261031.json)
+повторил H1/H2 TUN gates и запустил normal client/exit как две настоящие procd
+instances временной службы. После SIGKILL клиента procd выдал другой PID,
+прежний PID исчез, exit сохранил свой PID и пакетный обмен восстановился.
+Stop службы завершил оба native процесса; следующий пакет не прошёл.
+
+Первый fixture ошибочно считал отсутствие PID между reap/respawn фатальной
+ошибкой `jsonfilter` под `set -e`. Инструментированный повтор подтвердил точную
+строку. В bounded polling разрешён этот временный empty result; проверки
+нового PID, живого exit и реальных пакетов сохранены. Engine не менялся.
+
+Это доказательство supervision native процесса, а не готовый OpenWrt service
+adapter: UCI validation, ownership сети/DNS, crash journal, health API и
+автозагрузка с восстановлением ещё требуют отдельной реализации и приёмки.
+
 ## Повтор с новыми static amd64 artifacts
 
 `clean-vpn-openwrt-native-payload.mjs` принимает три ELF: normal engine,

@@ -114,8 +114,10 @@ try{
  if(payloadSha256)assert.match(log,/\r?\nCVPN_OPENWRT_NATIVE=passed\r?\n/);
  report.guestPackageInstalled=/\r?\nCVPN_OPENWRT_PACKAGE=installed-and-checked\r?\n/.test(log);
  report.normalTunPassed=/\r?\nCVPN_OPENWRT_NORMAL_TUN=passed\r?\n/.test(log);
+ report.nativeProcdPassed=/\r?\nCVPN_OPENWRT_NATIVE_PROCD=passed\r?\n/.test(log);
  report.status='passed';report.checks=['official-image-hash',target.machine+'-OpenWrt-procd-PID1','guest-loopback-only','real-ubus-system-board','UCI-write-read-commit','procd-owned-fixture-start','SIGKILL-respawn-new-PID','procd-stop-and-cleanup',...(payloadSha256?['local-payload-hash','native-FD-fixture-passed']:[]),...(report.guestPackageInstalled?['local-APK-install-and-production-check-config']:[]),...(report.normalTunPassed?['normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls']:[])];
  if(report.normalTunPassed)report.scope='real OpenWrt procd/UCI, native fixture FD and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance';
+ if(report.nativeProcdPassed)report.checks.push('normal-engine-procd-start-SIGKILL-new-client-PID-unchanged-exit-packets-restored-stop-no-packets');
 }catch(e){report.status='failed';report.error=e.code??'guest-smoke-failed';report.failure=String(e.message).slice(0,512);process.exitCode=1;}
 finally{
  if(created)try{run(['rm','-f',tag]);}catch{}
