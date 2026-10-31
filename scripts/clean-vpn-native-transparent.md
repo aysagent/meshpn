@@ -45,6 +45,9 @@ transparent/combo**: [native combo engine](clean-vpn-native-combo.md) добав
 
 ## Native enc-SNI и admission
 
+Физическое обновление Base62, проверки длинного SNI и обоих браузерных замеров:
+[checkpoint 2026-10-31](clean-vpn-native-base62-20261031.md).
+
 `transparent_auth.hpp` использует pinned BoringSSL, не свою реализацию криптографии:
 
 - Native формат `n2.<base62 labels>.<public-name>` использует алфавит JS

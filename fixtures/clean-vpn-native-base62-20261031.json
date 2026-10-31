@@ -1,0 +1,48 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-base62-physical-checkpoint",
+  "date": "2026-10-31",
+  "sourceCommit": "55505b3",
+  "format": { "send": "n2-base62", "accept": ["n2-base62", "n1-base32"], "labelBytes": 63, "hostnameBytes": 253, "longOriginRegressionBytes": 72 },
+  "tests": { "labCtest": {"passed": 14, "failed": 0}, "transparentIntegration": {"passed": 4, "failed": 0}, "comboAndDiagnostics": {"passed": 4, "failed": 0}, "linuxControlAndJsCodec": {"passed": 48, "failed": 0, "skipped": 0}, "vpsCtest": {"passed": 14, "failed": 0}, "radxaCtest": {"passed": 14, "failed": 0} },
+  "installed": {
+    "transport": "combo-tls",
+    "port": 443,
+    "exitEngineSha256": "9be1bcea24a2a7cbaac507f14cade805390f20c0a46ea53b0d02e67e370e5448",
+    "clientEngineSha256": "e4e9bb991cfcdbe3a531642929dbfdbf29aa3e0c0d867f233aba709a2aa6fee1",
+    "updater": "updated-both-with-rollback",
+    "oldClientNewExitHttpsAndDownload": true,
+    "replayReset": false,
+    "keysExported": false,
+    "temporaryVpsSwapRemoved": true,
+    "macSystemNetworkChanged": false,
+    "clientFirewallAndIpRulesUnchanged": true
+  },
+  "probes": {
+    "dns": {"passed": 4, "failed": 0, "types": ["A", "AAAA"], "transports": ["udp", "tcp"]},
+    "httpsStatus": 200,
+    "downloadBytes": 1048576,
+    "uploadBytes": 276000,
+    "uploadEchoExact": true,
+    "packetBranchWebSocketStatus": 101,
+    "browser": "Google Chrome 156.0.8078.79, fresh headless profile, disabled GPU, USB-bound process proxy",
+    "proxyByteBudget": 536870912,
+    "speedtest": {"completed": true, "downloadMbps": 43.12, "uploadMbps": 46.44, "pingMs": 82},
+    "yandex": {"completed": true, "downloadMbps": 83.51, "uploadMbps": 78.13, "pingMs": 105},
+    "comparativeBenchmark": false,
+    "iphoneAcceptance": false
+  },
+  "observer": {
+    "source": "offline-tcpdump-pcap",
+    "pcapSha256": "e5adfcf6d769aa5e05992019972b0b9aaeef170267e13fdd30eb20e8b0bc5ead",
+    "packets": 1500,
+    "synStreams": 22,
+    "observedClientHellos": 21,
+    "base62ClientHellos": 20,
+    "legacyBase32ClientHellos": 0,
+    "packetProfile": {"id": "chromium-156-bounded-cold-v1", "status": "matched", "differences": [], "sampleJa3": "4ac96c2c6d4187e2c5b8f87df98e21b9", "sampleJa4": "t13d0915h2_f91f431d341e_54d72502093d"},
+    "scope": "first cold ClientHello fields; measured fingerprints; no browser or HTTP equivalence verdict",
+    "rawSniExported": false
+  },
+  "limitations": ["two-post-update-Chrome147-runs-incomplete-cause-not-established", "final-browser-runtime-and-proxy-settings-differ", "no-physical-iphone-retest", "native-SNI-capacity-still-smaller-than-JS", "encrypted-packet-fallback-for-unsupported-hellos-not-implemented", "IPv4-original-destination-not-exit-hostname-resolution", "individual-browser-relay-EOF-shutdown-causes-not-correlated"]
+}

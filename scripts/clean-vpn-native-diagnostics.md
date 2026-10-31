@@ -1,8 +1,10 @@
 # Native: packet, relay и DNS диагностика
 
 [Приёмка и binary hashes](../fixtures/clean-vpn-native-diagnostics-20261031.json).
-Новый лабораторный checkpoint 31 октября. Рабочие Radxa/VPS после ремонта
-админки этой сборкой **не обновлялись**.
+Исходный лабораторный checkpoint 31 октября. Позже обе рабочие native службы
+обновлены вместе с [исправлением Base62](clean-vpn-native-base62-20261031.md);
+service diagnostics подтверждены на реальной паре. Лабораторный отчёт ниже
+сохраняет границы своих первоначальных проверок.
 
 Engine экспортирует capability `diagnostics`: schema 1, событие `diagnostics`,
 service interval 30 секунд. Обычные `state`/`status` сохраняют прежние семь полей.
