@@ -26,7 +26,9 @@
    H2 mimicry: исполняемый bounded contract, ALPS agreement, wire comparison;
    сначала исследовать существующую реализацию, не повторять уже готовые окна/
    SETTINGS. Новые browser параметры не должны молча обходить memory limits.
-5. UI профилей: captured/candidate/active, provenance, ограничения, самостоятельный
+5. **Готово локально:** [UI и evidence профилей](clean-vpn-native-profile-evidence-20261031.md),
+   SHA файла, import receipt, configured/saved, capture provenance; 15/15 + Chromium.
+   UI профилей: captured/candidate/active, provenance, ограничения, самостоятельный
    observer; combo packet и app TLS должны иметь раздельные результаты.
 6. Удобство combo enrollment: add/export/import/connect/rotate/revoke, готовые
    отдельные keys/CA/profile; `.mpn` и discovery только в изолированной среде.

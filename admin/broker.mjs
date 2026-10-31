@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Root-only local broker. No TCP listener, shell execution, supplied commands,
 // supplied filesystem paths, Docker socket or generic systemctl endpoint.
+import {profileCatalog,profileImportReceipt} from './lib/profile-catalog.mjs';
 import {certificateStatus} from './lib/certificates.mjs';
 import {createJournalDiagnostics} from './lib/engine-diagnostics.mjs';
 import {createClientAdministration,publicClientList} from './lib/clients.mjs';
@@ -67,7 +68,7 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
   return unit(c.vpnUnit);
  }
  const vpn=()=>readJson(c.vpnConfig);
- const profiles=()=>fs.readdirSync(c.profiles).filter(n=>/^[a-zA-Z0-9_.-]+\.json$/.test(n)).slice(0,256).flatMap(n=>{try{const p=readJson(path.join(c.profiles,n));return p.kind==='clean-vpn-native-tls-profile'?[{id:n,name:p.id,scenario:p.scenario,browserEquivalent:false}]:[];}catch{return[];}});
+ const profiles=()=>profileCatalog(c.profiles,{configuredPath:packetConfig(vpn()).tls_profile_path??null});
  const selected=(name)=>{need(typeof name==='string'&&profiles().some(p=>p.id===name),'profile_not_found',404);return path.join(c.profiles,name);};
  function publish(){mdns?.kill('SIGTERM');mdnsState={status:'starting'};const child=spawn('/usr/bin/python3',[fileURLToPath(new URL('./mdns.py',import.meta.url)),c.usbInterface,settings.hostname,c.usbAddress],{stdio:['ignore','pipe','ignore']});mdns=child;child.stdout.on('data',b=>{try{const a=JSON.parse(b.toString().trim());mdnsState={status:a.state===2?'published':'starting',hostname:a.hostname};}catch{}});child.on('error',()=>{mdnsState={status:'unavailable'};});child.on('close',()=>{if(mdns===child){mdnsState={status:'unavailable'};if(!closing){clearTimeout(mdnsRetry);mdnsRetry=setTimeout(publish,10000);mdnsRetry.unref();}}});}
  if(c.publishMdns!==false&&!isExit)publish();
@@ -112,7 +113,7 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  case '/observer/stop':exact(p,[]);return observer.stop();
  case '/observer/pcap':exact(p,[]);need(!observer.child&&observer.result?.pcapAvailable,'capture_not_ready',409);return{base64:fs.readFileSync(c.state+'/observer.pcap').toString('base64')};
  case '/observer':return observer.result??{status:'idle'};
- case '/profile/import':return jobs.start('profile-import',async()=>{exact(p,['profile']);need(p.profile?.kind==='clean-vpn-native-tls-profile'&&id(p.profile.id)&&JSON.stringify(p.profile).length<=16384,'profile_document');need(profiles().length<256,'profile_limit');const name=p.profile.id+'.json',file=path.join(c.profiles,name);need(!fs.existsSync(file),'profile_exists',409);const candidate=c.state+'/profile-candidate.json';atomic(candidate,p.profile);const raw=vpn(),packet={...packetConfig(raw),tls_profile_path:candidate},config=raw.transport==='combo-tls'?{...raw,boring:packet}:packet;const configFile=c.state+'/profile-check.json';atomic(configFile,config);await run(c.engine,['--check-config',configFile],{timeout:15000});atomic(file,p.profile,0o644);return{saved:true,id:name,activated:false};});
+ case '/profile/import':return jobs.start('profile-import',async()=>{exact(p,['profile']);need(p.profile?.kind==='clean-vpn-native-tls-profile'&&id(p.profile.id)&&JSON.stringify(p.profile).length<=16384,'profile_document');need(profiles().length<256,'profile_limit');const name=p.profile.id+'.json',file=path.join(c.profiles,name);need(!fs.existsSync(file),'profile_exists',409);const candidate=c.state+'/profile-candidate.json';atomic(candidate,p.profile);const raw=vpn(),packet={...packetConfig(raw),tls_profile_path:candidate},config=raw.transport==='combo-tls'?{...raw,boring:packet}:packet;const configFile=c.state+'/profile-check.json';atomic(configFile,config);await run(c.engine,['--check-config',configFile],{timeout:15000});atomic(file,p.profile,0o644);atomic(file+'.receipt',profileImportReceipt(file));return{saved:true,id:name,activated:false};});
  default:throw Object.assign(Error('not_found'),{status:404});
  }}
  const server=http.createServer(async(req,res)=>{try{need(req.method==='POST','method',405);const p=await body(req,65536);send(res,200,await dispatch(req.url,p));}catch(e){send(res,e.status??500,{error:safeError(e)});}});server.requestTimeout=15000;server.headersTimeout=5000;server.maxConnections=16;server.on('clientError',(_,s)=>s.destroy());

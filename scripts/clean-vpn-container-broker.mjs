@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Namespace-local supervisor. No Docker socket, host filesystem or arbitrary
 // command API. It owns exactly one configured engine child and its guard.
+import {profileCatalog,profileImportReceipt} from '../admin/lib/profile-catalog.mjs';
 import {projectEngineDiagnostics} from './lib/native-engine-diagnostics.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -58,7 +59,7 @@ export async function createContainerBroker(c,{engine=new ContainerEngine(c),run
  const role=packet(vpn()).role;need(['client','exit'].includes(role),'container_role');
  const vpnStatus=()=>{const status=engine.status();if(role!=='client')return status;const effective=packet(readJson(engine.state+'/engine.json',{})),ipv4=effective.peer_ipv4;return{...status,addressAssignment:packet(vpn()).address_assignment??'fixed',assignedIPv4:typeof ipv4==='string'&&/^10\.99\.0\.(?:[2-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$/.test(ipv4)?ipv4:null};};
  const profileDirectory=path.dirname(c.config);
- const profiles=()=>fs.readdirSync(profileDirectory).filter(n=>/^[a-zA-Z0-9_.-]+\.json$/.test(n)).flatMap(n=>{try{const p=readJson(path.join(profileDirectory,n));return p.kind==='clean-vpn-native-tls-profile'?[{id:n,name:p.id,scenario:p.scenario,browserEquivalent:false}]:[];}catch{return[];}}).slice(0,256);
+ const profiles=()=>profileCatalog(profileDirectory,{configuredPath:packet(vpn()).tls_profile_path??null});
  const service={validate:async()=>{},running:async()=>!!engine.child,guard:()=>engine.prepare(),stop:()=>engine.stop(),start:()=>engine.start(),restart:()=>engine.restart(),ready:async()=>{await engine.ready();await run(process.execPath,[c.health]);}};
  const transaction=new VpnSettingsTransaction({state:c.stateDirectory,config:c.config,settings:settingsFile,unit:'container-engine',managed:true},service);
  const recovery=await transaction.recover();settings=readJson(settingsFile,settings);
@@ -91,7 +92,7 @@ export async function createContainerBroker(c,{engine=new ContainerEngine(c),run
    case '/profile/import':return jobs.start('profile-import',async()=>{
     exact(p,['profile']);need(role==='client','client_settings_only',409);need(p.profile?.kind==='clean-vpn-native-tls-profile'&&/^[a-zA-Z0-9_-]{1,64}$/.test(p.profile.id)&&JSON.stringify(p.profile).length<=16384,'profile_document');
     need(profiles().length<256,'profile_limit');const name=p.profile.id+'.json',dest=path.join(profileDirectory,name);need(!fs.existsSync(dest),'profile_exists',409);
-    const candidate=c.stateDirectory+'/profile.json';atomic(candidate,p.profile);const next=vpn();packet(next).tls_profile_path=candidate;const check=c.stateDirectory+'/profile-check.json';atomic(check,next);await run(c.engine,['--check-config',check]);atomic(dest,p.profile);return{saved:true,id:name,activated:false};
+    const candidate=c.stateDirectory+'/profile.json';atomic(candidate,p.profile);const next=vpn();packet(next).tls_profile_path=candidate;const check=c.stateDirectory+'/profile-check.json';atomic(check,next);await run(c.engine,['--check-config',check]);atomic(dest,p.profile);atomic(dest+'.receipt',profileImportReceipt(dest));return{saved:true,id:name,activated:false};
    });
    case '/probe':exact(p,['kind']);need(p.kind==='dns'&&role==='client','container_probe_not_supported',501);return jobs.start('probe-dns',async()=>{await run(process.execPath,[c.health]);return{status:'passed',scope:'native container runtime health, not general leak test'};});
    case '/observer':return{status:'unsupported',reason:'container_observer_requires_separate_capture_namespace'};

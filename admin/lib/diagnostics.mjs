@@ -15,6 +15,7 @@ export function diagnosticExport(status={},settings={}){
   engineDiagnostics:publicEngineDiagnostics(status.engineDiagnostics),
   guard:pick(status.guard,['active']),wifi:pick(status.wifi,['wpa_state']),
   dns:pick(settings.dns,['mode','upstreams','integrationManaged']),
+  profiles:list(settings.profiles,256,p=>({...pick(p,['id','name','scenario','fileSha256','configured','runtimeVerified','browserEquivalent']),validation:pick(p?.validation,['status','checkedAt','scope']),provenance:pick(p?.provenance,['status','reason']),layers:pick(p?.layers,['packet','http','relay'])})),
   capabilities:pick(status.capabilities,['nativeManaged','networkOwner','containerManaged','role','clients','wifi','guardToggle','hostnameChange','observer','profileImport','vpnSettings','routingRules','dnsUpstreamConfig']),
   certificates:{...pick(c,['scope','status','remoteLeafObserved','clock','warningDays','verification','reason']),certificates:list(c.certificates,32,x=>pick(x,['index','ca','fingerprint256','validFrom','validTo','daysRemaining','state']))},
   jobs:list(status.jobs,32,x=>pick(x,['id','kind','status','started','finished'])),
