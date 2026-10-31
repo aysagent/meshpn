@@ -80,6 +80,13 @@ www.speedtest.net с HTTP 200. QUIC отключён только в тесто�
   переключение режима и подтверждения питания на fixture, без реальных
   reboot/poweroff. Это отдельная UI-проверка, не исправление native data plane.
 
+`3a1bf76` установлен на Radxa штатным `admin/install.mjs --update`, исходники
+доставлены fast-forward через Git bundle до `c3743e3`. После обновления
+`/?usb-check=2` возвращает HTTP 200, новые JS assets доступны, broker активен.
+Пароль и настройки сохранены. Native client сохранил PID 2209, exit — 866125;
+оба активны, guard включён. Временных listener на 3443 и диагностического
+NAT-правила больше нет. Это проверка обновления админки без restart движков.
+
 [Санитизированные результаты](../fixtures/clean-vpn-native-iphone-investigation-20261101.json)
 не содержат ключей, encoded SNI, сырых hello или pcap. Приватные записи остались
 в собственном root-only build-каталоге на Radxa.
