@@ -24,9 +24,9 @@ function remove(file) {
 const bytes = value => JSON.stringify(value, null, 2) + '\n';
 
 export class VpnSettingsTransaction {
-  constructor({state, config, settings, unit, managed, networkUnit}, service, {fault = () => {}} = {}) {
-    this.file = path.join(state, 'vpn-settings-transaction.json');
-    this.binding = {config, settings, unit, managed: managed === true,...(networkUnit?{networkUnit}:{})};
+  constructor({state, config, settings, unit, managed, networkUnit, networkConfig}, service, {fault = () => {}} = {}) {
+    this.file = path.join(state, networkConfig ? 'vpn-transport-transaction.json' : 'vpn-settings-transaction.json');
+    this.binding = {config, settings, unit, managed: managed === true,...(networkUnit?{networkUnit}:{}),...(networkConfig?{networkConfig}:{})};
     this.service = service;
     this.fault = fault;
   }
@@ -37,12 +37,12 @@ export class VpnSettingsTransaction {
     need(j.version === 1 && ['prepared', 'committed', 'rollback'].includes(j.phase) &&
       JSON.stringify(j.binding) === JSON.stringify(this.binding) &&
       typeof j.running === 'boolean' && (this.binding.managed || !j.running) &&
-      j.entries?.length === 2 && j.entries.every((e, i) =>
+      j.entries?.length === this.paths().length && j.entries.every((e, i) =>
         (typeof e.before === 'string' || (i === 1 && e.before === null)) &&
         typeof e.after === 'string'), 'vpn_transaction_invalid');
     return j;
   }
-  paths() { return [this.binding.config, this.binding.settings]; }
+  paths() { return [this.binding.config, this.binding.settings,...(this.binding.networkConfig?[this.binding.networkConfig]:[])]; }
   verify(j, committed = false) {
     this.paths().forEach((file, i) => {
       const current = read(file, i === 1);
@@ -79,22 +79,27 @@ export class VpnSettingsTransaction {
     this.clear();
     return {status: 'rolled-back', restarted: j.running};
   }
-  async apply(config, settings) {
+  async apply(config, settings, networkConfig) {
     need(!this.load(), 'vpn_transaction_recovery_required', 409);
     const running = this.binding.managed ? await this.service.running() : false;
     if (running) await this.service.guard();
+    need(!this.binding.networkConfig || networkConfig && typeof networkConfig === 'object', 'vpn_transport_network_required');
+    const values=[config,settings,networkConfig];
     const j = {version: 1, phase: 'prepared', binding: this.binding, running,
       entries: this.paths().map((file, i) => ({before: read(file, i === 1),
-        after: bytes(i === 0 ? config : settings)}))};
+        after: bytes(values[i])}))};
     atomic(this.file, j);
     try {
       this.fault('prepared');
+      // The old owner's ExecStopPost must read its OLD network config. Stop
+      // before writing any of the transport files, including for a stopped engine.
+      if (this.binding.networkConfig) { await this.service.validate(); await this.service.stop(); this.fault('quiesced'); }
       this.paths().forEach((file, i) => {
         this.verify(j); atomic(file, j.entries[i].after); this.fault('written-' + i);
       });
       if (running) {
         await this.service.guard();
-        await this.service.restart();
+        if (this.binding.networkConfig) await this.service.start(); else await this.service.restart();
         await this.service.ready();
       }
       this.fault('activated');

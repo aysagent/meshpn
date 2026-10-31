@@ -56,7 +56,7 @@ test('client role cannot enable exit client registry', async t => {
 });
 test('capability projection hides unsupported container controls and separates roles', () => {
   const caps = { containerManaged: true, role: 'exit', wifi: false, guardToggle: false, hostnameChange: false, observer: false, profileImport: false, vpnSettings: false, clients: true };
-  assert.deepEqual(adminControls(caps), { wifi: false, guardToggle: false, hostnameChange: false, observer: false, profileImport: false, vpnSettings: false, clients: true, probes: [] });
+  assert.deepEqual(adminControls(caps), { wifi: false, guardToggle: false, hostnameChange: false, observer: false, profileImport: false, vpnSettings: false, clients: true, devicePower:false, probes: [] });
   const client = adminControls({ ...caps, role: 'client', vpnSettings: true, profileImport: true, clients: false }); assert.equal(client.clients, false); assert.equal(client.vpnSettings, true); assert.deepEqual(client.probes, ['dns']);
 });
 test('HTTP enrollment download requires changed password, POST and CSRF and is an attachment', async t => {

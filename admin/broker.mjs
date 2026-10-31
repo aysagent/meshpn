@@ -19,6 +19,7 @@ import {Metrics} from './lib/metrics.mjs';
 import {Wifi} from './lib/wifi.mjs';
 import {Observer} from './lib/observer.mjs';
 import {VpnSettingsTransaction} from './lib/vpn-settings-transaction.mjs';
+import {clientTransportPlan} from './lib/client-transport.mjs';
 import {setTimeout as delay} from 'node:timers/promises';
 export async function createBroker(c,{run=command,clientsFactory=createClientAdministration}={}){
  need(c.version===1&&isIPv4(c.usbAddress)&&/^[a-zA-Z0-9_-]{1,15}$/.test(c.usbInterface),'broker_config');
@@ -27,6 +28,9 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  const packetConfig=v=>v.transport==='combo-tls'?v.boring:v;
  const packetControls=!isExit&&(!initialVpn.transport||['boring-tls','combo-tls'].includes(initialVpn.transport));
  const activationUnit=c.networkUnit??c.vpnUnit;
+ const transportNetwork=!isExit&&c.nativeManaged&&c.networkUnit&&c.bundle&&c.vpnConfig===c.bundle+'/config.json'&&readJson(c.bundle+'/installed.json',{}).transport==='combo-tls'?c.bundle+'/network.json':null;
+ const devicePower=!!(!isExit&&c.nativeManaged&&c.bundle&&c.networkUnit);
+ let powerScheduled=null,transportPhase=()=>{};
  for(const n of [c.vpnUnit,...(isExit?[]:[c.guardUnit]),...(c.networkUnit?[c.networkUnit]:[])])need(/^[a-zA-Z0-9_-]+\.service$/.test(n),'broker_unit');
  for(const p of [c.state,c.engine,c.profiles,c.vpnConfig,c.socket,...(isExit?[]:[c.guardScript]),...(c.clientsDirectory?[c.clientsDirectory]:[])])need(typeof p==='string'&&path.isAbsolute(p)&&!/[\n\r\0]/.test(p),'broker_path');
  need(!c.clientsDirectory||isExit,'clients_exit_only');
@@ -47,20 +51,31 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
   ready:async()=>{const s=await nativeState();need(s.Type==='notify'&&s.ActiveState==='active'&&s.SubState==='running'&&Number(s.MainPID)>0&&(isExit?['ready','listening','handshake']:['ready','idle_wait']).includes(s.StatusText),'native_not_ready');await service.guard();}
  };
  const transaction=new VpnSettingsTransaction({state:c.state,config:c.vpnConfig,settings:settingsFile,unit:c.vpnUnit,managed:c.nativeManaged,networkUnit:c.networkUnit},service);
- let recovery;try{recovery=await transaction.recover();}catch(e){recovery={status:'blocked',error:safeError(e)};}
- const pendingTransaction=()=>{try{return !!transaction.load();}catch{return true;}};
+ const transportTransaction=transportNetwork?new VpnSettingsTransaction({state:c.state,config:c.vpnConfig,settings:settingsFile,unit:c.vpnUnit,managed:true,networkUnit:c.networkUnit,networkConfig:transportNetwork},{...service,
+  guard:async()=>need((await guard()).active,'enable_guard_first',409),
+  running:async()=>{const s=await nativeState();need(s.Type==='notify'&&['active','activating','inactive','failed'].includes(s.ActiveState),'vpn_service_transition',409);return ['active','activating'].includes(s.ActiveState);},
+  stop:async()=>{transportPhase('stopping-network');await run('/usr/bin/systemctl',['stop',c.vpnUnit,activationUnit],{timeout:210000});},
+  start:async()=>{transportPhase('starting-network');await run('/usr/bin/systemctl',['start',activationUnit],{timeout:60000});transportPhase('waiting-tunnel');await run('/usr/bin/systemctl',['start',c.vpnUnit],{timeout:60000});}
+ }):null;
+ let recovery;try{const mode=await transportTransaction?.recover();const regular=await transaction.recover();recovery=mode&&mode.status!=='none'?mode:regular;}catch(e){recovery={status:'blocked',error:safeError(e)};}
+ const pendingTransaction=()=>{try{return !!transaction.load()||!!transportTransaction?.load();}catch{return true;}};
  settings=readJson(settingsFile,{hostname:'mpn',profile:null});
- async function lifecycle(action){
+ async function lifecycle(action,phase=()=>{}){
   if(action!=='stop'&&!isExit){
+   phase('checking-guard');
    need((await guard()).active,'enable_guard_first',409);
    if(c.networkUnit){const binds=(await run('/usr/bin/systemctl',['show',c.vpnUnit,'-p','BindsTo','--value'])).out.trim().split(/\s+/);need(binds.includes(c.networkUnit)&&binds.includes(c.guardUnit),'network_owner_binding_required',409);}
   }
-  await run('/usr/bin/systemctl',[action,activationUnit],{timeout:210000});
+  // A healthy network owner need not tear down routes/DNS to restart its engine.
+  const restartEngine=action==='restart'&&c.networkUnit&&(await unit(c.networkUnit)).ActiveState==='active';
+  phase(restartEngine?'restarting-engine':action==='stop'?'stopping-network':'starting-network');
+  await run('/usr/bin/systemctl',[action,restartEngine?c.vpnUnit:activationUnit],{timeout:210000});
   if(c.networkUnit&&action!=='stop'){
    // Starting an already-active owner is a systemd no-op. Recovery or an
    // explicit engine stop can leave that owner alive with the engine stopped.
    // Queue only a start: a healthy engine must keep its existing connection.
-   await run('/usr/bin/systemctl',['start','--no-block',c.vpnUnit],{timeout:15000});
+   phase('starting-engine');await run('/usr/bin/systemctl',['start','--no-block',c.vpnUnit],{timeout:15000});
+   phase('waiting-tunnel');
    const deadline=performance.now()+60000;let error;
    do{try{await service.ready();return unit(c.vpnUnit);}catch(e){error=e;}await delay(500);}while(performance.now()<deadline);
    throw error;
@@ -69,40 +84,55 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  }
  const vpn=()=>readJson(c.vpnConfig);
  const profiles=()=>profileCatalog(c.profiles,{configuredPath:packetConfig(vpn()).tls_profile_path??null});
- const selected=(name)=>{need(typeof name==='string'&&profiles().some(p=>p.id===name),'profile_not_found',404);return path.join(c.profiles,name);};
+ const selected=(name)=>{need(typeof name==='string'&&profiles().some(p=>p.id===name),'profile_not_found',404);return name==='@configured'?packetConfig(vpn()).tls_profile_path:path.join(c.profiles,name);};
  function publish(){mdns?.kill('SIGTERM');mdnsState={status:'starting'};const child=spawn('/usr/bin/python3',[fileURLToPath(new URL('./mdns.py',import.meta.url)),c.usbInterface,settings.hostname,c.usbAddress],{stdio:['ignore','pipe','ignore']});mdns=child;child.stdout.on('data',b=>{try{const a=JSON.parse(b.toString().trim());mdnsState={status:a.state===2?'published':'starting',hostname:a.hostname};}catch{}});child.on('error',()=>{mdnsState={status:'unavailable'};});child.on('close',()=>{if(mdns===child){mdnsState={status:'unavailable'};if(!closing){clearTimeout(mdnsRetry);mdnsRetry=setTimeout(publish,10000);mdnsRetry.unref();}}});}
  if(c.publishMdns!==false&&!isExit)publish();
  let wifiBootTimer;async function restoreWifi(){try{if(!jobs.current&&wifi?.profiles.length){await wifi.restore();}}catch{}finally{if(!closing){wifiBootTimer=setTimeout(restoreWifi,15000);wifiBootTimer.unref();}}}void restoreWifi();
- async function applyVpn(p){exact(p,['address','port','serverName','sni','profile']);need(isIPv4(p.address)&&Number.isInteger(p.port)&&p.port>=1&&p.port<=65535,'vpn_endpoint');for(const n of [p.serverName,p.sni])need(typeof n==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(n),'tls_name');const raw=vpn(),old=packetConfig(raw);need(raw.role==='client'&&packetControls,'packet_client_config_required');const packet={...old,address:p.address,port:p.port,server_name:p.serverName,sni:p.sni};if(p.profile)packet.tls_profile_path=selected(p.profile);else delete packet.tls_profile_path;
+ async function applyVpn(p,phase=()=>{}){exact(p,['address','port','serverName','sni','profile','transport']);need(isIPv4(p.address)&&Number.isInteger(p.port)&&p.port>=1&&p.port<=65535,'vpn_endpoint');for(const n of [p.serverName,p.sni])need(typeof n==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(n),'tls_name');const raw=vpn(),old=packetConfig(raw);need(raw.role==='client'&&packetControls,'packet_client_config_required');const packet={...old,address:p.address,port:p.port,server_name:p.serverName,sni:p.sni};if(p.profile)packet.tls_profile_path=selected(p.profile);else delete packet.tls_profile_path;
+ const desired=p.transport??raw.transport??'boring-tls';need(['boring-tls','combo-tls'].includes(desired),'client_transport');
+ const changing=desired!==(raw.transport??'boring-tls');
  // Combo SNI selects the branch on exit. Changing it requires migrating the
  // shared listener and relay identities, outside a client settings transaction.
- if(raw.transport==='combo-tls')need(p.sni.toLowerCase()===raw.transparent.public_name.toLowerCase(),'combo_name_requires_exit_migration',409);
- const next=raw.transport==='combo-tls'?{...raw,boring:packet}:packet;const file=c.state+'/candidate.json';atomic(file,next);await run(c.engine,['--check-config',file],{timeout:15000});
+ if(raw.transport==='combo-tls'&&!changing)need(p.sni.toLowerCase()===raw.transparent.public_name.toLowerCase(),'combo_name_requires_exit_migration',409);
+ need(!changing||transportTransaction,'transport_switch_not_supported',409);
+ const plan=changing?clientTransportPlan(raw,readJson(transportNetwork),settings,desired,packet):null;
+ const next=plan?.config??(raw.transport==='combo-tls'?{...raw,boring:packet}:packet);const file=c.state+'/candidate.json';atomic(file,next);await run(c.engine,['--check-config',file],{timeout:15000});
  // A settings operation must not silently leave the independent guard allowing
  // the old exit while switching the route/DNS owner to a new endpoint.
  need(packet.address===old.address&&packet.port===old.port,'endpoint_change_requires_owner_migration',409);
- let result;try{result=await transaction.apply(next,{...settings,profile:p.profile??null});}finally{settings=readJson(settingsFile,{hostname:'mpn',profile:null});}
+ let result;try{transportPhase=phase;result=plan?await transportTransaction.apply(next,{...plan.settings,profile:p.profile??null},plan.network):await transaction.apply(next,{...settings,profile:p.profile??null});}finally{transportPhase=()=>{};settings=readJson(settingsFile,{hostname:'mpn',profile:null});}
  return{...result,applied:!!c.nativeManaged&&result.restarted,requiresNativeMigration:!c.nativeManaged,requiresStart:!!c.nativeManaged&&!result.restarted};}
  async function dispatch(route,p={}){
- if(!['/status','/settings','/logs','/observer','/observer/pcap','/clients'].includes(route)){
+ if(!['/status','/operations','/settings','/logs','/observer','/observer/pcap','/clients'].includes(route)){
+  need(!powerScheduled,'device_power_pending',409);
   need(!jobs.current,'operation_in_progress',409);
-  need((route==='/vpn/action'&&p.action==='stop')||!pendingTransaction(),'vpn_transaction_recovery_required',409);
+  need((route==='/vpn/action'&&p.action==='stop')||route==='/device/power'||!pendingTransaction(),'vpn_transaction_recovery_required',409);
  }
  if(route.startsWith('/clients'))need(clients,'clients_not_configured',409);
  if(isExit&&['/hostname','/vpn/settings','/guard','/wifi/scan','/wifi/save','/wifi/connect','/wifi/delete','/probe','/observer/start','/observer/stop','/observer/pcap','/profile/import'].includes(route))need(false,'client_only_operation',409);
  if(!isExit&&!packetControls&&['/vpn/settings','/profile/import','/probe','/observer/start'].includes(route))need(false,'transport_control_not_supported',409);
  switch(route){
- case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),(wifi?wifi.summary():Promise.resolve({wpa_state:'not_applicable'})).catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),certificates:certificateStatus(vpn()),engineDiagnostics:await journalDiagnostics(c.vpnUnit,v),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,captive:readPortalState(path.dirname(c.socket)+'/captive.json'),mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:pendingTransaction()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,role:isExit?'exit':'client',clients:!!clients,wifi:isExit?false:'wpa_supplicant-owned-profiles',guardToggle:!isExit,hostnameChange:!isExit,observer:packetControls,profileImport:packetControls,vpnSettings:packetControls,probes:packetControls?['exit','dns','internet']:[],routingRules:false,dnsUpstreamConfig:false,transports:[initialVpn.transport??'boring-tls']}};}
- case '/settings':{const raw=vpn(),v=raw.transport==='combo-tls'?raw.boring:raw;return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',vpn:{role:isExit?'exit':'client',address:v.address,port:v.port,serverName:v.server_name,sni:v.sni,profile:settings.profile??(v.tls_profile_path?path.basename(v.tls_profile_path):null),dns:v.dns===true,transport:raw.transport??'boring-tls',nativeManaged:!!c.nativeManaged},dns:{mode:isExit?'exit':'tunnel',upstreams:isExit?'Private .mpn resolver is opt-in; host DNS unchanged':'native fixed upstreams; editing not supported by engine',integrationManaged:!!c.networkUnit},profiles:isExit?[]:profiles(),wifi:wifi?await wifi.catalog():[]};}
+ case '/operations':{exact(p,[]);const active=jobs.current&&/^(vpn-|guard$)/.test(jobs.current.kind);return{jobs:jobs.history,...(active?{vpn:await unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null}:{})};}
+ case '/status':{const [v,g,w]=await Promise.all([unit(c.vpnUnit).catch(()=>({ActiveState:'unknown'})),guard().catch(()=>({active:null})),(wifi?wifi.summary():Promise.resolve({wpa_state:'not_applicable'})).catch(()=>({wpa_state:'unavailable'}))]);return{metrics:metrics.sample(),device:{power:powerScheduled},certificates:certificateStatus(vpn()),engineDiagnostics:await journalDiagnostics(c.vpnUnit,v),vpn:v,network:c.networkUnit?await unit(c.networkUnit).catch(()=>({ActiveState:'unknown'})):null,guard:g,wifi:w,captive:readPortalState(path.dirname(c.socket)+'/captive.json'),mdns:mdnsState,jobs:jobs.history,vpnSettingsRecovery:{...recovery,pending:pendingTransaction()},capabilities:{nativeManaged:!!c.nativeManaged,networkOwner:!!c.networkUnit,role:isExit?'exit':'client',clients:!!clients,wifi:isExit?false:'wpa_supplicant-owned-profiles',guardToggle:!isExit,hostnameChange:!isExit,devicePower,observer:packetControls,profileImport:packetControls,vpnSettings:packetControls,probes:packetControls?['exit','dns','internet']:[],routingRules:false,dnsUpstreamConfig:false,transports:transportTransaction?['boring-tls','combo-tls']:[initialVpn.transport??'boring-tls']}};}
+ case '/settings':{const raw=vpn(),v=raw.transport==='combo-tls'?raw.boring:raw;return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',vpn:{role:isExit?'exit':'client',address:v.address,port:v.port,serverName:v.server_name,sni:v.sni,profile:profiles().find(p=>p.configured)?.id??null,dns:v.dns===true,transport:raw.transport??'boring-tls',nativeManaged:!!c.nativeManaged},dns:{mode:isExit?'exit':'tunnel',upstreams:isExit?'Private .mpn resolver is opt-in; host DNS unchanged':'native fixed upstreams; editing not supported by engine',integrationManaged:!!c.networkUnit},profiles:isExit?[]:profiles(),wifi:wifi?await wifi.catalog():[]};}
  case '/clients':exact(p,[]);return publicClientList(await clients.list());
  case '/clients/add':exact(p,['name']);return jobs.start('client-add',async()=>publicClientList(await clients.add(p.name)));
  case '/clients/rename':exact(p,['name','newName']);return jobs.start('client-rename',async()=>publicClientList(await clients.rename(p.name,p.newName)));
  case '/clients/rotate':case '/clients/revoke':{exact(p,['name','confirm']);need(p.confirm===true,'client_action_confirmation_required',409);const action=route.split('/').at(-1);return jobs.start('client-'+action,async()=>publicClientList(await clients[action](p.name)));}
  case '/clients/export':exact(p,['name']);return clients.export(p.name);
  case '/hostname':exact(p,['hostname']);settings.hostname=hostname(p.hostname);atomic(settingsFile,settings);if(c.publishMdns!==false)publish();return{hostname:settings.hostname,adminUrl:'http://'+settings.hostname+'.local/',fallbackUrl:'http://'+c.usbAddress+'/'};
- case '/vpn/settings':return jobs.start('vpn-settings',()=>applyVpn(p));
- case '/vpn/action':exact(p,['action']);need(['start','stop','restart'].includes(p.action),'vpn_action');return jobs.start('vpn-'+p.action,()=>lifecycle(p.action));
- case '/guard':exact(p,['enabled','confirmDirect']);need(typeof p.enabled==='boolean','guard_enabled');need(p.enabled||p.confirmDirect===true,'direct_egress_confirmation_required',409);return jobs.start('guard',async()=>{const active=(await unit(c.vpnUnit)).ActiveState==='active';await lifecycle('stop');await run(process.execPath,[fileURLToPath(new URL('./usb-mdns.mjs',import.meta.url)),'down']);try{if(p.enabled)await run('/usr/bin/systemctl',['restart',c.guardUnit],{timeout:30000});else await run(c.guardScript,['down'],{timeout:30000});}finally{await run(process.execPath,[fileURLToPath(new URL('./usb-mdns.mjs',import.meta.url)),'up']);}if(p.enabled&&active)await lifecycle('start');return{...(await guard()),vpnStopped:!p.enabled};});
+ case '/vpn/settings':return jobs.start('vpn-settings',({phase})=>{phase('applying-settings');return applyVpn(p,phase);});
+ case '/device/power':{exact(p,['action','confirm']);need(devicePower,'device_power_not_supported',409);need(['reboot','poweroff'].includes(p.action),'device_power_action');need(p.confirm===true,'device_power_confirmation_required',409);return jobs.start('device-'+p.action,async()=>{await run('/usr/bin/systemd-run',['--unit=meshpn-admin-device-power','--on-active=3s','--timer-property=AccuracySec=1s','--collect','--','/usr/bin/systemctl',p.action],{timeout:5000});powerScheduled={action:p.action,delaySeconds:3};return powerScheduled;});}
+ case '/vpn/action':exact(p,['action']);need(['start','stop','restart'].includes(p.action),'vpn_action');return jobs.start('vpn-'+p.action,({phase})=>lifecycle(p.action,phase));
+ case '/guard':exact(p,['enabled','confirmDirect']);need(typeof p.enabled==='boolean','guard_enabled');need(p.enabled||p.confirmDirect===true,'direct_egress_confirmation_required',409);return jobs.start('guard',async({phase})=>{
+  phase('checking-guard');const before=await guard(),engine=await unit(c.vpnUnit),network=c.networkUnit?await unit(c.networkUnit):null;
+  const active=engine.ActiveState==='active';
+  if(before.active===p.enabled&&(p.enabled?(await unit(c.guardUnit)).ActiveState==='active':engine.ActiveState==='inactive'&&(!network||network.ActiveState==='inactive')))return{...before,vpnStopped:!p.enabled,unchanged:true};
+  await lifecycle('stop',phase);await run(process.execPath,[fileURLToPath(new URL('./usb-mdns.mjs',import.meta.url)),'down']);
+  try{phase(p.enabled?'enabling-guard':'disabling-guard');if(p.enabled)await run('/usr/bin/systemctl',['restart',c.guardUnit],{timeout:30000});else await run(c.guardScript,['down'],{timeout:30000});}
+  finally{phase('restoring-usb-access');await run(process.execPath,[fileURLToPath(new URL('./usb-mdns.mjs',import.meta.url)),'up']);}
+  if(p.enabled&&active)await lifecycle('start',phase);return{...(await guard()),vpnStopped:!p.enabled};
+ });
  case '/wifi/scan':exact(p,[]);return jobs.start('wifi-scan',()=>wifi.scan());
  case '/wifi/save':return jobs.start('wifi-save',async()=>{wifi.save(p);await wifi.sync();return wifi.list();});
  case '/wifi/connect':exact(p,['id']);return jobs.start('wifi-connect',()=>wifi.connect(p.id));

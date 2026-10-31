@@ -14,6 +14,7 @@ const reservation=net.createServer();reservation.listen(0,'127.0.0.1');await onc
 const app=await createAdmin({address:'127.0.0.1',subnet:'127.0.0.0/8',port,state,lab:true},{rpc:async(route,p)=>{
  if(route==='/settings')return{hostname:'mpn',adminUrl:'/',vpn:{role:'client',transport:'combo-tls',nativeManaged:true,address:'192.0.2.1',port:443,sni:'relay.example',serverName:'personal-cert.internal'},dns:{mode:'tunnel',upstreams:'fixture'},profiles:[{id:'active.json',name:'configured-fixture',configured:true,fileSha256:'a'.repeat(64),validation:{status:'unknown'},layers:{http:'native-defaults'}},{id:'saved.json',name:'saved-fixture',configured:false,validation:{status:'accepted-at-import',checkedAt:'2026-10-31T00:00:00Z'},layers:{http:'bounded-request-fields'}}],wifi:[],capabilities};
  if(route==='/status')return{metrics:{time:Date.now(),timezone:'UTC',temperatures:[],memory:{},uptimeSeconds:1,cpu:[],network:[]},vpn:{ActiveState:'active'},network:{ActiveState:'active'},guard:{active:guard},engineDiagnostics:{status:'sampled',schema:1,scope:'process-lifetime-sampled',dns:{upstream_timeouts:1}},wifi:{},jobs:job?[job]:[],capabilities,vpnSettingsRecovery:{pending:false}};
+ if(route==='/operations')return{jobs:job?[job]:[]};
  if(route==='/guard'){calls.push(p);assert.deepEqual(p,{enabled:false,confirmDirect:true});job={id:'guard-fixture',kind:'guard',status:'running'};return job;}
  throw Error('unexpected_route');
 }});
@@ -25,8 +26,8 @@ try{
  await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith(url+'/')?r.continue():r.abort());
  await page.goto(url+'/');
  await page.type('#login-password','browser fixture password');await page.$eval('#login-form',f=>f.requestSubmit());
- try{await page.waitForFunction(()=>document.querySelector('#vpn-transport').textContent==='combo-tls',{polling:100});}catch(e){console.error(JSON.stringify({errors,dom:await page.evaluate(()=>({message:document.querySelector('#message').textContent,login:document.querySelector('#login').hidden,transport:document.querySelector('#vpn-transport').textContent}))}));throw e;}
- assert.equal(await page.evaluate(()=>!!document.querySelector('#vpn-form select:disabled')),false);assert.equal(await page.evaluate(()=>document.querySelector('#engine-diagnostics').textContent.includes('upstream_timeouts')),true);
+ try{await page.waitForFunction(()=>document.querySelector('#vpn-transport').value==='combo-tls',{polling:100});}catch(e){console.error(JSON.stringify({errors,dom:await page.evaluate(()=>({message:document.querySelector('#message').textContent,login:document.querySelector('#login').hidden,transport:document.querySelector('#vpn-transport').textContent}))}));throw e;}
+ assert.equal(await page.$eval('#vpn-transport',e=>e.disabled),true);assert.equal(await page.evaluate(()=>document.querySelector('#engine-diagnostics').textContent.includes('upstream_timeouts')),true);
  const profileText=await page.$eval('#profile-evidence',e=>e.textContent);assert.match(profileText,/Указан в конфигурации\nconfigured-fixture/);assert.match(profileText,/Сохранён, не выбран\nsaved-fixture/);assert.match(profileText,/Текущее соединение проверяет отдельный наблюдатель/);assert.doesNotMatch(profileText,/полностью совпадает|неотличим/);
  await page.evaluate(()=>document.querySelector('#guard-enabled').click());
  // Previously a polling refresh could undo a selection before Apply.

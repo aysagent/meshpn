@@ -8,6 +8,7 @@ export function adminControls(capabilities = {}, role = 'client') {
     profileImport: client && capabilities.profileImport !== false,
     vpnSettings: client && capabilities.vpnSettings !== false,
     clients: role === 'exit' && capabilities.clients === true,
+    devicePower: client && capabilities.devicePower === true && !capabilities.containerManaged,
     probes: client ? (capabilities.probes ?? (capabilities.containerManaged ? ['dns'] : ['exit', 'dns', 'internet'])) : [],
   };
 }

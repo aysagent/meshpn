@@ -5,8 +5,10 @@ Native combo autostart is installed on the personal Radxa/VPS pair; see the
 [current physical state](../scripts/clean-vpn-native-combo-daily-20261031.md).
 The later [broker sandbox repair](../scripts/clean-vpn-native-admin-repair-20261031.md)
 is installed and physically checked: save/stop/start and guard off/direct USB
-DNS/HTTPS work. Transport switching in the UI remains unimplemented; the label
-now reflects the actual configuration. New native/profile/UI work is tracked in
+DNS/HTTPS work. Host combo/boring selection and confirmed device power actions
+are now implemented; transparent-only and container mode switching remain pending.
+The next physical check is mode switching with the existing guard/DNS owner.
+New native/profile/UI work is tracked in
 [the 31 October queue](../scripts/clean-vpn-native-night-20261031.md) and
 [its report](../scripts/clean-vpn-native-night-20261031-report.md), with separate
 artifact hashes and lab/physical boundaries. Follow those links for the current
@@ -17,7 +19,11 @@ exit](../scripts/clean-vpn-native-transport-switching-plan.md). A combo exit mus
 accept boring, transparent and combo clients on the same endpoint; the client
 chooses its mode through the admin without reconfiguring/restarting the exit or
 reissuing access. This includes DNS/guard/lifecycle and crash recovery, not only
-a UI selector. It is planned; current transport switching remains unimplemented.
+a UI selector. The host boring/combo subset now changes engine and network
+configs transactionally, preserving the inactive relay in private broker state.
+The three-file journal quiesces the old owner before writing its replacement,
+rolls back failures, and recovers after broker interruption. Physical WAN path
+losses during ClientHello are a separate unresolved reliability issue.
 
 The user subsequently made Radxa available and authorized physical checks.
 Temporary checks on Radxa/VPS are recorded in the

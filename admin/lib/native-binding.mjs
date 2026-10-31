@@ -12,7 +12,7 @@ export function nativeAdminBinding(name,{root=''}={}){
   manifest.activation===manifest.networkUnit&&manifest.guardUnit==='clean-vpn-killswitch.service','native_host_install_required');
  const network=JSON.parse(readOwned(at(bundle+'/network.json'))),config=JSON.parse(readOwned(at(bundle+'/config.json')));
  const packet=config.transport==='combo-tls'?config.boring:config;
- need((config.transport??'boring-tls')===manifest.transport,'native_transport_binding');
+ need((config.transport??'boring-tls')===manifest.transport||manifest.transport==='combo-tls'&&!config.transport&&!network.combo_redirect,'native_transport_binding');
  if(config.transport==='combo-tls')need(network.combo_redirect&&config.transparent?.role==='client'&&
   network.combo_redirect.endpoint===packet.address&&network.combo_redirect.listen_port===config.transparent.listen?.port&&
   config.transparent.exit?.ipv4===packet.address&&config.transparent.exit?.port===packet.port,'native_combo_binding');

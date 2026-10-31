@@ -22,3 +22,10 @@ test('catalog skips unsafe files and malformed documents, bounds receipts, and h
  assert.throws(()=>profileImportReceipt(dir+'/link.json'));
  fs.writeFileSync(dir+'/z.json.receipt',' '.repeat(2049));rows=profileCatalog(dir);assert.equal(rows[1].validation.status,'unknown');assert.equal(rows[0].layers.http,'native-defaults');
 });
+test('installed profile outside catalog stays selected through a fixed configured alias',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mpn-installed-profile-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ fs.mkdirSync(dir+'/catalog');const file=dir+'/installed.json';fs.writeFileSync(file,fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));
+ const rows=profileCatalog(dir+'/catalog',{configuredPath:file});assert.equal(rows.length,1);assert.equal(rows[0].id,'@configured');assert.equal(rows[0].configured,true);
+ assert.deepEqual(profileCatalog(dir+'/catalog',{configuredPath:dir+'/missing.json'}),[]);
+ fs.symlinkSync(file,dir+'/link.json');assert.deepEqual(profileCatalog(dir+'/catalog',{configuredPath:dir+'/link.json'}),[]);
+});

@@ -21,6 +21,15 @@ for(const combo of [false,true])test(`admin binds a fresh ${combo?'combo':'borin
  assert.equal(b.vpnConfig,'/opt/clean-vpn-native/daily/config.json');assert.equal((combo?b.config.boring:b.config).address,'192.0.2.1');
  if(combo){const file=root+'/opt/clean-vpn-native/daily/config.json',config=JSON.parse(fs.readFileSync(file));config.transparent.exit.port=444;fs.writeFileSync(file,JSON.stringify(config));assert.throws(()=>nativeAdminBinding('daily',{root}),/native_combo_binding/);config.transparent.exit.port=443;fs.writeFileSync(file,JSON.stringify(config));}
  for(const name of ['../daily','daily/x',''])assert.throws(()=>nativeAdminBinding(name,{root}),/native_install_name/);
+ if(combo){
+  const configFile=root+'/opt/clean-vpn-native/daily/config.json',networkFile=root+'/opt/clean-vpn-native/daily/network.json';
+  const saved=fs.readFileSync(configFile),savedNetwork=fs.readFileSync(networkFile),raw=JSON.parse(saved),net=JSON.parse(savedNetwork);
+  fs.writeFileSync(configFile,JSON.stringify(raw.boring));
+  assert.throws(()=>nativeAdminBinding('daily',{root}),/native_transport_binding/);
+  delete net.combo_redirect;fs.writeFileSync(networkFile,JSON.stringify(net));
+  assert.equal(nativeAdminBinding('daily',{root}).config.transport,undefined);
+  fs.writeFileSync(configFile,saved);fs.writeFileSync(networkFile,savedNetwork);
+ }
  const network=root+'/etc/systemd/system/native-daily-network.service';fs.appendFileSync(network,'# changed');
  assert.throws(()=>nativeAdminBinding('daily',{root}),/native_unit_changed/);
 });
