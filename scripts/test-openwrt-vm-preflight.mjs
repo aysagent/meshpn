@@ -20,3 +20,14 @@ test('OpenWrt runner rejects option/connection injection before filesystem or co
  const r=spawnSync(process.execPath,['scripts/clean-vpn-openwrt-vm-smoke.mjs','--connection=bad;id','--qemu-image=--help'],{encoding:'utf8',timeout:5000});
  assert.equal(r.status,1);assert.match(r.stderr,/ERR_ASSERTION/);assert.equal(r.stdout,'');
 });
+test('native test payload refuses dynamic or foreign ELF before generating test credentials',t=>{
+ const d=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-payload-preflight-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
+ const file=d+'/candidate';
+ for(const dynamic of[false,true]){
+  const b=Buffer.alloc(120);Buffer.from([127,69,76,70,2,1]).copy(b);b.writeUInt16LE(dynamic?62:183,18);
+  b.writeBigUInt64LE(64n,32);b.writeUInt16LE(56,54);b.writeUInt16LE(1,56);b.writeUInt32LE(3,64);fs.writeFileSync(file,b);
+  const r=spawnSync(process.execPath,['scripts/clean-vpn-openwrt-native-payload.mjs','--engine='+file,'--fixture='+file,
+   '--integration='+file,'--directory='+d+'/new'],{encoding:'utf8',timeout:5000});
+  assert.equal(r.status,1);assert.match(r.stderr,dynamic?/static_ELF_required/:/amd64_ELF_required/);assert.equal(fs.existsSync(d+'/new'),false);
+ }
+});

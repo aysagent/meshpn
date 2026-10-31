@@ -42,6 +42,8 @@
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
 8. **Начат резерв:** [реальная OpenWrt VM](clean-vpn-openwrt-vm.md),
    procd/UCI/respawn/stop, без NIC; 8 gates + два безопасных preflight теста.
+   Дополнительно [static amd64 native внутри OpenWrt](clean-vpn-openwrt-native.md):
+   H1/H2/PSK через FD; до этого CTest 14/14 и 64/64 в отдельной amd64 VM.
    SDK packages/LuCI/native network acceptance ещё не выполнены.
    Резерв: первые локально устанавливаемые OpenWrt packages/UCI/procd/LuCI и
    виртуальная приёмка. Физические роутеры не трогать; не обещать полную LuCI

@@ -1,0 +1,66 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-openwrt-vm-smoke",
+  "status": "passed",
+  "source": "https://downloads.openwrt.org/releases/25.12.6/targets/x86/64/openwrt-25.12.6-x86-64-generic-ext4-combined.img.gz",
+  "downloadSha256": "f8538784d0288b4133a99ac2a68443e4922ffde6343e80df56a5882364b9d499",
+  "kernelSha256": "8f70595f3a6eec3112e007450a1a600153904deffa52ab368712342583cb387c",
+  "diskSha256": "27d6a99117a6d9c2a8eedbfda0f8baa7a3149f7ddfa168f4bb0ae13815130162",
+  "qemuImage": {
+    "id": "fe1f0a4ecacd161717dc718d9f9b203dffed776b90e20e23a60b383bbb1fe546",
+    "architecture": "arm64"
+  },
+  "scope": "real OpenWrt procd/UCI and supplied native FD fixture; no TUN/WAN/LuCI acceptance",
+  "payloadSha256": "8f51d933101949f06d44c3c0f5518c4fa5c3bc482ac8f202c8b32c50a4af7aae",
+  "hostNetworkChanged": false,
+  "physicalHostsTouched": false,
+  "guestNic": false,
+  "hostShare": false,
+  "persistentGuestDisk": false,
+  "globalBinfmtChanged": false,
+  "releaseSignatureVerified": false,
+  "timing": "QEMU TCG functional boot only; not performance evidence",
+  "exitCode": 0,
+  "containerState": {
+    "OOMKilled": false,
+    "ExitCode": 0,
+    "Error": ""
+  },
+  "checks": [
+    "official-image-hash",
+    "x86_64-OpenWrt-procd-PID1",
+    "guest-loopback-only",
+    "real-ubus-system-board",
+    "UCI-write-read-commit",
+    "procd-owned-fixture-start",
+    "SIGKILL-respawn-new-PID",
+    "procd-stop-and-cleanup",
+    "local-payload-hash",
+    "native-FD-fixture-passed"
+  ],
+  "elapsedMs": 37923,
+  "consoleSha256": "64ff39e09c46296dd9cae41af5094c5d5ec8560c35397a292bddada45d014a12",
+  "cleanup": "owned-container-removed; disk remains pristine; snapshot discarded",
+  "nativePayload": {
+    "schema": 1,
+    "kind": "openwrt-native-lab-payload",
+    "binaries": {
+      "engine": {
+        "sha256": "a6eec6c9f185a4fa1f57ae7862719fb7a3c3c0eabfdc41dd12fceabf0dbfd3bd",
+        "bytes": 6624312
+      },
+      "fixture": {
+        "sha256": "ba15cb9112a0ddb1f69f816868c69b68fb875109a94a5ecd9edf026cb1b8cbf7",
+        "bytes": 7507408
+      },
+      "integration": {
+        "sha256": "dc3a025f1b3d06228bf0150cc830a2fd95e863f90bcba47ba223897d18e18d46",
+        "bytes": 2740024
+      }
+    },
+    "profileSha256": "baaf251e0de975de15d1d501b2630235f3210fe15efe49e3dfcb326e72d99e2f",
+    "credentials": "fresh-test-only-never-production",
+    "scope": "static engine check-config and fixture FD TLS; no TUN/routing/browser-equivalence claim"
+  },
+  "preflightTests": 3
+}
