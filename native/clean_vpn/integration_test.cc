@@ -112,7 +112,10 @@ struct Child {
       size_t e;
       while((e=input.find('\n'))!=std::string::npos){
         auto j=json::parse(input.substr(0,e));input.erase(0,e+1);
-        require(j.size()==7&&j.at("event")=="status"&&j.at("state")=="ready","soak_unexpected_session_event");
+        if(!(j.size()==7&&j.at("event")=="status"&&j.at("state")=="ready")){
+          std::cerr<<"unexpected session metadata "<<j.dump()<<"\n";
+          throw std::runtime_error("soak_unexpected_session_event");
+        }
         return j;
       }
       char b[4096];auto n=read(events,b,sizeof(b));
@@ -661,6 +664,31 @@ int main(int argc,char** argv){
     }
     client.command("{\"op\":\"status\"}\n");client.await_state("ready",2000);
     server.command("{\"op\":\"status\"}\n");server.await_state("ready",2000);
+    // A full recipient packet queue must not hide PING/ACK behind DATA in
+    // the same TLS stream. Hold pressure beyond an entire liveness cycle;
+    // the previous 1.5 s check ended before the 5 s false timeout could fire.
+    until=Clock::now()+std::chrono::seconds(10);
+    while(Clock::now()<until){
+      for(int i=0;i<64;i++){
+        auto n=send(client.packet,pressure.data(),pressure.size(),MSG_DONTWAIT);
+        require(n==ssize_t(pressure.size())||(n<0&&(errno==EAGAIN||errno==EWOULDBLOCK)),"sustained_pressure_send");
+      }
+      client.healthy_status();server.healthy_status();
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    require(server.healthy_status().at("dropped_packets").get<uint64_t>()>0,"pressure_must_fill_recipient_queue");
+    fcntl(server.packet,F_SETFL,O_NONBLOCK);
+    Bytes drained(65536);auto quiet=Clock::now()+std::chrono::milliseconds(100);
+    const auto drain_end=Clock::now()+std::chrono::seconds(3);
+    while(Clock::now()<quiet&&Clock::now()<drain_end){
+      if(recv(server.packet,drained.data(),drained.size(),MSG_DONTWAIT)>0)
+        quiet=Clock::now()+std::chrono::milliseconds(100);
+      else {pollfd p{server.packet,POLLIN,0};poll(&p,1,5);}
+    }
+    require(Clock::now()<drain_end,"pressure_drain_bounded");
+    transfer(client,server,1400,false,7);transfer(server,client,1400,true,8);
+    client.healthy_status();server.healthy_status();
+    std::cout<<"sustained full recipient queue preserves liveness PASS\n";
     for(auto pid:{client.pid,server.pid}){
       std::ifstream stat("/proc/"+std::to_string(pid)+"/status");std::string line;bool found=false;
       while(std::getline(stat,line))if(line.rfind("VmRSS:",0)==0){auto kb=std::stoll(line.substr(6));require(kb<128*1024,"bounded_rss");found=true;std::cout<<"pressure "<<line<<"\n";}

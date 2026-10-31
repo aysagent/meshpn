@@ -527,6 +527,11 @@ struct Session {
           // No implicit client-to-client routing through the shared TUN.
           for(const auto& peer:config.peers)check(std::memcmp(p.data()+16,&peer.address,4)!=0,"peer_destination");
         }
+        // IP delivery is best effort, but TLS carries both IP and liveness.
+        // Pausing TLS reads for a full TUN queue also hides PING/ACK behind
+        // DATA and falsely kills a healthy tunnel. Drop only the validated
+        // inner packet on congestion; keep parsing bounded TLS/H2/H1 input.
+        if(p.size()>queue_limit-packets.size()){ctl.dropped++;return;}
         packets.push(std::move(p));
   }
   static int data_cb(nghttp2_session* h,uint8_t,int32_t id,const uint8_t* b,size_t n,void* u){
@@ -674,7 +679,7 @@ struct Session {
       }
       if(discovery_response&&network.empty()){discovery_done=true;return 0;}
       // Bounded per-tick work: control/health cannot be starved by flood traffic.
-      for(int i=0;i<32&&packets.size()<queue_limit-max_packet-16384;i++){
+      for(int i=0;i<32;i++){
         int n=SSL_read(ssl,buffer.data(),16384);
         if(n<=0){int e=SSL_get_error(ssl,n);check(e!=SSL_ERROR_ZERO_RETURN,"tls_peer_closed");
           check(e==SSL_ERROR_WANT_READ||e==SSL_ERROR_WANT_WRITE,"tls_read");read_wants_write=e==SSL_ERROR_WANT_WRITE;break;}
@@ -714,7 +719,7 @@ struct Session {
       // Newly read TUN packets must arm writable interest in this tick, not
       // wait for the next polling timeout before serialising HTTP/2 DATA.
       pump();
-      return (packets.size()<queue_limit-max_packet-16384?POLLIN:0)|(!network.empty()||read_wants_write?POLLOUT:0);
+      return POLLIN|(!network.empty()||read_wants_write?POLLOUT:0);
   }
   void enqueue(const uint8_t* data,size_t n){
     outgoing.push(frame(data,n));ctl.tx++;
