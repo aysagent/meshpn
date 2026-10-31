@@ -12,6 +12,13 @@ now reflects the actual configuration. New native/profile/UI work is tracked in
 artifact hashes and lab/physical boundaries. Follow those links for the current
 step; do not restart the old legacy-migration work from this historical list.
 
+New functional requirement: [client transport switching with a shared combo
+exit](../scripts/clean-vpn-native-transport-switching-plan.md). A combo exit must
+accept boring, transparent and combo clients on the same endpoint; the client
+chooses its mode through the admin without reconfiguring/restarting the exit or
+reissuing access. This includes DNS/guard/lifecycle and crash recovery, not only
+a UI selector. It is planned; current transport switching remains unimplemented.
+
 The user subsequently made Radxa available and authorized physical checks.
 Temporary checks on Radxa/VPS are recorded in the
 [binary-update acceptance report](../scripts/clean-vpn-native-update-report.md).
