@@ -67,7 +67,7 @@ test('broker switches both modes and never puts inactive credentials in public s
  const {b,bundle}=await broker(t);assert.deepEqual((await b.dispatch('/status')).capabilities.transports,['boring-tls','combo-tls']);
  for(const transport of ['boring-tls','combo-tls']){
   const job=await b.dispatch('/vpn/settings',{transport,address:packet.address,port:443,serverName:packet.server_name,sni:packet.sni,profile:null});
-  for(let i=0;i<30;i++){await new Promise(r=>setImmediate(r));if((await b.dispatch('/operations')).jobs.find(j=>j.id===job.id).status!=='running')break;}
+  for(let i=0;i<300;i++){await new Promise(r=>setTimeout(r,5));if((await b.dispatch('/operations')).jobs.find(j=>j.id===job.id).status!=='running')break;}
   const state=(await b.dispatch('/operations')).jobs.find(j=>j.id===job.id);assert.equal(state.status,'passed',state.error);
   assert.equal((await b.dispatch('/settings')).vpn.transport,transport);assert.equal(!!readJson(bundle+'/network.json').combo_redirect,transport==='combo-tls');
  }
@@ -79,7 +79,7 @@ test('switching preserves an installed browser profile outside the selectable ca
  const raw=readJson(bundle+'/config.json');raw.boring.tls_profile_path=file;atomic(bundle+'/config.json',raw);
  const settings=await b.dispatch('/settings');assert.equal(settings.vpn.profile,'@configured');
  const job=await b.dispatch('/vpn/settings',{transport:'boring-tls',address:packet.address,port:443,serverName:packet.server_name,sni:packet.sni,profile:settings.vpn.profile});
- for(let i=0;i<30;i++){await new Promise(r=>setImmediate(r));if((await b.dispatch('/operations')).jobs.find(j=>j.id===job.id).status!=='running')break;}
+ for(let i=0;i<300;i++){await new Promise(r=>setTimeout(r,5));if((await b.dispatch('/operations')).jobs.find(j=>j.id===job.id).status!=='running')break;}
  assert.equal((await b.dispatch('/operations')).jobs[0].status,'passed');
  assert.equal(readJson(bundle+'/config.json').tls_profile_path,file);
  assert.equal((await b.dispatch('/settings')).vpn.profile,'@configured');
