@@ -21,6 +21,15 @@ start)
   directory=$(mktemp -d "$BASE/run-XXXXXXXX")
   script=$(readlink -f "$0")
   systemd-run --quiet --collect --unit="$UNIT" --property=Type=exec --property=UMask=0077 --property=RuntimeMaxSec="$((10#$seconds+20))" --property=TimeoutStopSec=10 --property=KillMode=control-group /bin/bash "$script" _record "$directory" "$seconds"
+  ready=false
+  for attempt in {1..8}; do
+    if grep -q '^CAPTURE_READY$' "$directory/summary.txt" 2>/dev/null; then ready=true; break; fi
+    sleep 1
+  done
+  if [[ $ready != true ]] || ! systemctl is-active --quiet "$UNIT.service"; then
+    echo "CAPTURE_FAILED=$directory" >&2
+    exit 1
+  fi
   echo "CAPTURE_STARTED=$directory"
   echo "DURATION_SECONDS=$seconds"
   echo 'Move USB to the phone, open internet.yandex.ru, then return USB to the laptop.'
@@ -30,7 +39,7 @@ status)
   if [[ -d $BASE ]]; then find "$BASE" -maxdepth 2 -type f -name summary.txt -exec cat {} \;; fi
   ;;
 stop)
-  systemctl stop "$UNIT.service"
+  if systemctl is-active --quiet "$UNIT.service"; then systemctl stop "$UNIT.service"; fi
   echo 'Capture stopped; records retained.'
   ;;
 _record)
@@ -69,7 +78,7 @@ _record)
   # Each interface uses at most two ~4 MB files; rotation replaces old data.
   for iface in usb0 wlan0 tun0; do
     if ip link show "$iface" >/dev/null 2>&1; then
-      tcpdump -n -i "$iface" -s 256 -U -C 4 -W 2 -w "$directory/$iface.pcap" >"$directory/$iface.log" 2>&1 &
+      tcpdump -Z root -n -i "$iface" -s 256 -U -C 4 -W 2 -w "$directory/$iface.pcap" >"$directory/$iface.log" 2>&1 &
       children+=("$!")
     fi
   done
