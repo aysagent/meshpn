@@ -57,3 +57,28 @@ export function compareHttp2Captures(browserDocument,nativeDocument) {
       'HPACK-size-not-encoder-strategy','GET-navigation-vs-native-POST-are-different-application-contracts',
       'header-values-redacted-except-explicit-public-allowlist','no-resumption-or-later-stream-or-timing-claim']};
 }
+
+// Selected fields may match while the full browser/native request still differs.
+// Preserve the complete comparison alongside the narrow positive evidence.
+export function compareHttpRequestFields(browserDocument,nativeDocument){
+  const fullPrefix=compareHttp2Captures(browserDocument,nativeDocument);
+  const samples=d=>(d.bundle??d).samples.map(evidence);
+  const browser=samples(browserDocument),native=samples(nativeDocument);
+  const reads={
+    pseudoHeaderOrder:h=>{const v=h.headers.names.filter(n=>n.startsWith(':'));return v.length===4&&new Set(v).size===4?v:null;},
+    userAgent:h=>{const v=h.headers.publicValues.filter(([n])=>n==='user-agent').map(([,v])=>v);return v.length===1?v[0]:null;},
+    settingsIdOrder:h=>h.settingsFrames.map(f=>f.map(([id])=>id)),
+  };
+  const variants=(items,read)=>[...new Set(items.filter(Boolean).map(read).filter(v=>v!==null).map(v=>JSON.stringify(v)))].sort().map(v=>JSON.parse(v));
+  const fields=Object.entries(reads).map(([field,read])=>{
+    const b=variants(browser,read),n=variants(native,read),overlap=b.some(x=>n.some(y=>JSON.stringify(x)===JSON.stringify(y)));
+    return{field,browser:b,native:n,status:!b.length||!n.length?'unmeasured':b.length===1&&n.length===1&&overlap?'stable-match':overlap?'variable-overlap':'different'};
+  });
+  const incomplete=browser.some(h=>!h)||native.some(h=>!h)||fields.some(f=>f.status==='unmeasured');
+  return{schema:1,kind:'clean-vpn-http-request-field-comparison',
+    status:incomplete?'incomplete':fields.every(f=>f.status==='stable-match')?'selected-fields-match':fields.some(f=>f.status==='different')?'different':'variable',
+    fields,fullPrefix,browserEquivalent:false,profileActivated:false,
+    scope:'controlled-first-request-selected-fields-not-full-browser-or-policy-approval',
+    limitations:['settings-IDs-match-does-not-match-values-or-windows','UA-and-pseudo-order-match-does-not-establish-method-body-other-headers-or-priority',
+      'passive-encrypted-pcap-cannot-prove-these-HTTP-fields','capture-integrity-not-publisher-authentication']};
+}

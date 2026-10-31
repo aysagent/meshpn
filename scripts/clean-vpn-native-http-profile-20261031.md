@@ -50,6 +50,17 @@ node --test scripts/test-native-profile-policy.mjs
 Новые [capabilities](../fixtures/clean-vpn-native-profile-policy-capabilities-20261031.json)
 описывают `bounded-cold-http-v1`; прежняя dated evidence не переписана.
 
+Отдельный [отчёт по трём полям запроса](../fixtures/clean-vpn-native-http-request-fields-20261031.json)
+показывает совпадение UA, порядка pseudo-headers и порядка IDs SETTINGS.
+Полный prefix diff включён в тот же документ: значения окон, остальные headers,
+priority и HPACK продолжают различаться. Такой результат не разрешает профиль
+политикой и не доказывает browser equivalence. HTTP-поля измерены на собственном
+TLS endpoint; пассивный encrypted pcap их не раскрывает.
+
+```bash
+node scripts/clean-vpn-native-h2-compare.mjs --request-fields BROWSER.json NATIVE.json
+```
+
 ## Сохранившиеся различия
 
 Browser имеет stream window 6 MiB, connection window 15 MiB, header limit
