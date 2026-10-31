@@ -38,7 +38,10 @@
    CTest 14/14, wire/enrollment 10/10, managed 12/12, combo 17/17.
    Повтор актуальных managed Compose/Alpine, restart/recreate/state preservation.
    Это обновление имеющейся реализации, не новая разработка контейнеров с нуля.
-8. Резерв: первые локально устанавливаемые OpenWrt packages/UCI/procd/LuCI и
+8. **Начат резерв:** [реальная OpenWrt VM](clean-vpn-openwrt-vm.md),
+   procd/UCI/respawn/stop, без NIC; 8 gates + два безопасных preflight теста.
+   SDK packages/LuCI/native network acceptance ещё не выполнены.
+   Резерв: первые локально устанавливаемые OpenWrt packages/UCI/procd/LuCI и
    виртуальная приёмка. Физические роутеры не трогать; не обещать полную LuCI
    функциональность по одному прототипу.
 
