@@ -74,6 +74,24 @@ for protocol in 2 1.1; do
   test "$(jsonfilter -i "$work/final.json" -e '@.rx_packets')" -ge 4
  done
  printf 'CVPN_OPENWRT_NORMAL_TUN_%s=passed\n' "$protocol"
+ "$engine" --config "$work/tun-exit-$protocol.json" --service >"$work/exit-bad.log" 2>&1 & exit_pid=$!
+ "$engine" --config "$work/tun-bad-client.json" --service >"$work/client-bad.log" 2>&1 & client_pid=$!
+ count=0
+ until grep -q '"state":"auth_rejected"' "$work/exit-bad.log"; do
+  kill -0 "$exit_pid"; kill -0 "$client_pid"
+  count=$((count+1)); test "$count" -lt 15
+  sleep 1
+ done
+ if grep -q '"state":"ready"' "$work/client-bad.log"; then echo bad_psk_ready; exit 1; fi
+ if ping -I 10.99.0.2 -c 1 -W 1 198.18.0.80; then echo bad_psk_packet; exit 1; fi
+ kill -TERM "$client_pid"; wait "$client_pid"
+ kill -TERM "$exit_pid"; wait "$exit_pid"
+ for role in client exit; do
+  tail -n 1 "$work/$role-bad.log" >"$work/final.json"
+  test "$(jsonfilter -i "$work/final.json" -e '@.tx_packets')" = 0
+  test "$(jsonfilter -i "$work/final.json" -e '@.rx_packets')" = 0
+ done
+ printf 'CVPN_OPENWRT_NORMAL_PSK_%s=rejected\n' "$protocol"
 done
 # Actual normal engines under procd, distinct from the initial sleep fixture.
 # This temporary service is not an installed network owner or production adapter.

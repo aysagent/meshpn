@@ -6,8 +6,12 @@
 [текущий локальный план](../admin/LOCAL-PLAN.md), не закрывает его оставшиеся этапы.
 
 Дополнение 31 октября: [настоящий OpenWrt VM boot smoke](clean-vpn-openwrt-vm.md)
-готов, procd/UCI/respawn/stop прошли на официальном x86/64 image без NIC.
-Это не VPN/LuCI/package приёмка; критерии полной версии ниже остаются открыты.
+готов для x86/64 и ARMv8. [Engine-only SDK APK](clean-vpn-openwrt-sdk-20261031.md)
+обеих архитектур установлены и проверены: actual SHA, normal TUN H1/H2,
+wrong PSK, route/stop negatives, native procd respawn/stop. Исходники упаковки —
+[openwrt/](../openwrt/README.md). WAN/DNS/network ownership/reboot, LuCI,
+capture/observer ещё не реализованы и не приняты; критерии полной версии ниже
+остаются открыты. Вступление выше описывает исходный checkpoint 28 октября.
 
 ## Требования и решение
 

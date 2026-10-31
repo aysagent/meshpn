@@ -7,13 +7,14 @@ import {execFileSync} from 'node:child_process';
 import {createHash,randomBytes} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import assert from 'node:assert/strict';
-const {values:v}=parseArgs({options:Object.fromEntries(['architecture','engine','fixture','integration','directory','profile','package','tun-helper','tun-module','tun-index'].map(k=>[k,{type:'string'}]))});
+const {values:v}=parseArgs({options:{...Object.fromEntries(['architecture','engine','fixture','integration','directory','profile','package','tun-helper','tun-module','tun-index'].map(k=>[k,{type:'string'}])),'normal-only':{type:'boolean',default:false}}});
 assert.ok(v.directory&&path.isAbsolute(v.directory)&&!fs.existsSync(v.directory),'new_absolute_directory');
 const architecture=v.architecture??'amd64';assert.ok(['amd64','arm64'].includes(architecture),'payload_architecture');const machine=architecture==='amd64'?62:183;
 const tunOptions=['tun-helper','tun-module','tun-index'],enableTun=tunOptions.some(k=>v[k]);
 assert.ok(!enableTun||tunOptions.every(k=>v[k]),'all_tun_inputs_required');
+const normalOnly=v['normal-only'];assert.ok(!normalOnly||enableTun,'normal_only_requires_tun');
 const sha=b=>createHash('sha256').update(b).digest('hex'),binaries={};
-for(const name of['engine','fixture','integration',...(enableTun?['tun-device']:[])]){
+for(const name of['engine',...(!normalOnly?['fixture','integration']:[]),...(enableTun?['tun-device']:[])]){
  const input=v[name==='tun-device'?'tun-helper':name];
  assert.ok(input&&path.isAbsolute(input));const fd=fs.openSync(input,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW|fs.constants.O_NONBLOCK);
  try{
@@ -59,6 +60,7 @@ write('client.json',JSON.stringify(client));write('bad-client.json',JSON.stringi
 for(const version of['2','1.1'])write('exit-'+version+'.json',JSON.stringify({...common,role:'exit',http_version:version,cert:root+'/cert.pem',key:root+'/key.pem',alps:true}));
 if(enableTun){
  write('tun-client.json',JSON.stringify({...client,tun:'cvctun0',connection_mode:'persistent'}));
+ write('tun-bad-client.json',JSON.stringify({...client,tun:'cvctun0',connection_mode:'persistent',secret_path:root+'/wrong.psk'}));
  for(const version of['2','1.1'])write('tun-exit-'+version+'.json',JSON.stringify({...common,tun:'cvetun0',role:'exit',http_version:version,cert:root+'/cert.pem',key:root+'/key.pem',alps:true}));
 }
 const installPackage=packageBytes?String.raw`
@@ -69,32 +71,33 @@ test "$(sha256sum /usr/sbin/clean-vpn-engine | cut -d ' ' -f 1)" = '${sha(binari
 test "$(jsonfilter -i "$work/installed-capabilities.json" -e '@.packet_ipc')" = false
 printf 'CVPN_OPENWRT_PACKAGE=installed-and-checked\n'
 `:'';
+const fixtureTests=normalOnly?'':String.raw`
+"$media/integration" "$media/fixture" "$work/client.json" "$work/exit-2.json" service
+printf 'CVPN_OPENWRT_NATIVE_H2=passed\n'
+"$media/integration" "$media/fixture" "$work/client.json" "$work/exit-1.1.json" service
+printf 'CVPN_OPENWRT_NATIVE_H1=passed\n'
+"$media/integration" "$media/fixture" "$work/bad-client.json" "$work/exit-2.json" reject
+printf 'CVPN_OPENWRT_NATIVE_PSK_REJECTION=passed\n'
+`;
 write('run.sh',String.raw`#!/bin/sh
 set -eu
 media=/mnt/cvpn-payload
 work=/tmp/cvpn-openwrt-native
 mkdir -m 700 "$work"
-for file in psk wrong.psk key.pem cert.pem profile.json client.json bad-client.json exit-2.json exit-1.1.json${enableTun?' tun-client.json tun-exit-2.json tun-exit-1.1.json':''}; do cp "$media/$file" "$work/$file"; done
+for file in psk wrong.psk key.pem cert.pem profile.json client.json bad-client.json exit-2.json exit-1.1.json${enableTun?' tun-client.json tun-bad-client.json tun-exit-2.json tun-exit-1.1.json':''}; do cp "$media/$file" "$work/$file"; done
 chmod 600 "$work"/*
 ${installPackage}
 "$media/engine" --capabilities >"$work/capabilities.json"
 test "$(jsonfilter -i "$work/capabilities.json" -e '@.packet_ipc')" = false
 test "$(jsonfilter -i "$work/capabilities.json" -e '@.experimental_tls_profiles.prewire_check')" = true
 "$media/engine" --check-config "$work/client.json" >/dev/null
-"$media/integration" "$media/fixture" "$work/client.json" "$work/exit-2.json" service
-printf 'CVPN_OPENWRT_NATIVE_H2=passed
-'
-"$media/integration" "$media/fixture" "$work/client.json" "$work/exit-1.1.json" service
-printf 'CVPN_OPENWRT_NATIVE_H1=passed
-'
-"$media/integration" "$media/fixture" "$work/bad-client.json" "$work/exit-2.json" reject
-printf 'CVPN_OPENWRT_NATIVE_PSK_REJECTION=passed\n'
+${fixtureTests}
 ${enableTun?'sh "$media/tun-smoke.sh"':''}
 printf 'CVPN_OPENWRT_NATIVE=passed\n'
 rm -rf "$work"
 `);
-write('manifest.json',JSON.stringify({schema:1,kind:'openwrt-native-lab-payload',architecture,
+write('manifest.json',JSON.stringify({schema:1,kind:'openwrt-native-lab-payload',architecture,fixtureFD:!normalOnly,
  binaries:Object.fromEntries(Object.entries(binaries).map(([n,b])=>[n,{sha256:sha(b),bytes:b.length}])),profileSha256:sha(profile),packageSha256:packageBytes?sha(packageBytes):null,
  tun:enableTun?{moduleSha256:sha(tunInputs['tun-module']),indexSha256:sha(tunInputs['tun-index']),scriptSha256:sha(fs.readFileSync(fileURLToPath(new URL('../openwrt/lab/tun-smoke.sh',import.meta.url))))}:null,
- credentials:'fresh-test-only-never-production',scope:enableTun?'static engine and fixture FD TLS plus normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI/browser-equivalence claim':'static engine check-config and fixture FD TLS; no TUN/routing/browser-equivalence claim'},null,2)+'\n');
+ credentials:'fresh-test-only-never-production',scope:normalOnly?'normal engine TUN H1/H2 and procd with isolated source-policy routing; no fixture FD or WAN/LuCI/browser-equivalence claim':enableTun?'static engine and fixture FD TLS plus normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI/browser-equivalence claim':'static engine check-config and fixture FD TLS; no TUN/routing/browser-equivalence claim'},null,2)+'\n');
 console.log(JSON.stringify({status:'prepared',directory:v.directory,privateTestCredentials:true,physicalHostsTouched:false}));

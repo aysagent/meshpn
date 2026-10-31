@@ -87,7 +87,7 @@ umount /mnt/cvpn-payload
 `:'';
 const guestBytes=Buffer.from(guest+payloadGuest);
 const report={schema:1,kind:'clean-vpn-openwrt-vm-smoke',status:'running',architecture,source,downloadSha256:expected,kernelSha256:sha(kernel),diskSha256:sha(disk),qemuImage:{id:image.Id,architecture:image.Architecture},
- scope:payloadSha256?'real OpenWrt procd/UCI and supplied native FD fixture; no TUN/WAN/LuCI acceptance':'real OpenWrt procd/UCI boot and supervision fixture; no VPN engine, LuCI, routing or packet acceptance',payloadSha256,
+ scope:payloadSha256?'real OpenWrt procd/UCI and supplied native payload; no WAN/LuCI acceptance':'real OpenWrt procd/UCI boot and supervision fixture; no VPN engine, LuCI, routing or packet acceptance',payloadSha256,
  hostNetworkChanged:false,physicalHostsTouched:false,guestNic:false,hostShare:false,persistentGuestDisk:false,globalBinfmtChanged:false,releaseSignatureVerified:false,timing:'QEMU TCG functional boot only; not performance evidence'};
 let child,log='',promptBuffer='',activated=false,created=false;const startedAt=Date.now();
 // UART/console input buffers are small: wait for each fresh shell prompt.
@@ -115,9 +115,12 @@ try{
  report.guestPackageInstalled=/\r?\nCVPN_OPENWRT_PACKAGE=installed-and-checked\r?\n/.test(log);
  report.normalTunPassed=/\r?\nCVPN_OPENWRT_NORMAL_TUN=passed\r?\n/.test(log);
  report.nativeProcdPassed=/\r?\nCVPN_OPENWRT_NATIVE_PROCD=passed\r?\n/.test(log);
- report.status='passed';report.checks=['official-image-hash',target.machine+'-OpenWrt-procd-PID1','guest-loopback-only','real-ubus-system-board','UCI-write-read-commit','procd-owned-fixture-start','SIGKILL-respawn-new-PID','procd-stop-and-cleanup',...(payloadSha256?['local-payload-hash','native-FD-fixture-passed']:[]),...(report.guestPackageInstalled?['local-APK-install-and-production-check-config']:[]),...(report.normalTunPassed?['normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls']:[])];
- if(report.normalTunPassed)report.scope='real OpenWrt procd/UCI, native fixture FD and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance';
+ report.nativeFixturePassed=['H2','H1','PSK_REJECTION'].every(marker=>new RegExp('\\r?\\nCVPN_OPENWRT_NATIVE_'+marker+'=passed\\r?\\n').test(log));
+ report.normalPskRejected=['2','1.1'].every(protocol=>log.includes('\nCVPN_OPENWRT_NORMAL_PSK_'+protocol+'=rejected'));
+ report.status='passed';report.checks=['official-image-hash',target.machine+'-OpenWrt-procd-PID1','guest-loopback-only','real-ubus-system-board','UCI-write-read-commit','procd-owned-fixture-start','SIGKILL-respawn-new-PID','procd-stop-and-cleanup',...(payloadSha256?['local-payload-hash']:[]),...(report.nativeFixturePassed?['native-FD-fixture-passed']:[]),...(report.guestPackageInstalled?['local-APK-install-and-production-check-config']:[]),...(report.normalTunPassed?['normal-engine-real-TUN-H1-H2-route-removal-and-stop-negative-controls']:[])];
+ if(report.normalTunPassed)report.scope='real OpenWrt procd/UCI and normal TUN H1/H2 with isolated source-policy routing; no WAN/LuCI acceptance';
  if(report.nativeProcdPassed)report.checks.push('normal-engine-procd-start-SIGKILL-new-client-PID-unchanged-exit-packets-restored-stop-no-packets');
+ if(report.normalPskRejected)report.checks.push('normal-engine-wrong-PSK-H1-H2-auth-rejected-zero-packets');
 }catch(e){report.status='failed';report.error=e.code??'guest-smoke-failed';report.failure=String(e.message).slice(0,512);process.exitCode=1;}
 finally{
  if(created)try{run(['rm','-f',tag]);}catch{}

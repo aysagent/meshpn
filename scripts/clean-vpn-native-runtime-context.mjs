@@ -11,7 +11,7 @@ assert.equal(process.argv.length, 3, 'Usage: node scripts/clean-vpn-native-runti
 const output = path.resolve(process.argv[2]); assert.equal(fs.existsSync(output), false, 'new_context_required');
 const files = ['scripts/clean-vpn-native-runtime.mjs', 'scripts/clean-vpn-native-runtime-health.mjs',
   'scripts/lib/native-runtime-plan.mjs', 'scripts/lib/native-runtime-address.mjs', 'scripts/lib/native-relay-health.mjs', 'scripts/lib/native-transparent-network.mjs', 'scripts/containers/native-runtime-entrypoint.sh',
-  'scripts/containers/clean-vpn-native-runtime.Containerfile', 'scripts/containers/clean-vpn-native-alpine.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json'];
+  'scripts/containers/clean-vpn-native-runtime.Containerfile', 'scripts/containers/clean-vpn-native-alpine.Containerfile', 'fixtures/native-tls-profiles/cold-h2.json', 'fixtures/native-tls-profiles/chromium-156-bounded-cold.json', 'fixtures/native-tls-profiles/chromium-156-bounded-http.json'];
 files.push('scripts/clean-vpn-container-broker.mjs', 'scripts/clean-vpn-container-web.mjs', 'scripts/containers/clean-vpn-managed.Containerfile',
   'admin/server.mjs', 'admin/lib/common.mjs', 'admin/lib/command.mjs', 'admin/lib/metrics.mjs',
   'admin/lib/profile-catalog.mjs', 'admin/lib/vpn-settings-transaction.mjs', 'admin/lib/auth.mjs', 'admin/lib/captive.mjs',

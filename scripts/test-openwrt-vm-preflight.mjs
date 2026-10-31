@@ -44,3 +44,8 @@ test('TUN payload rejects incomplete inputs and unpinned kernel media before gen
   assert.equal(fs.existsSync(d+'/new'),false);
  }
 });
+test('normal-only payload requires real TUN gates rather than a capabilities-only success',t=>{
+ const d=fs.mkdtempSync(path.join(os.tmpdir(),'cvpn-normal-only-preflight-'));t.after(()=>fs.rmSync(d,{recursive:true,force:true}));
+ const r=spawnSync(process.execPath,['scripts/clean-vpn-openwrt-native-payload.mjs','--normal-only','--directory='+d+'/new'],{encoding:'utf8',timeout:5000});
+ assert.equal(r.status,1);assert.match(r.stderr,/normal_only_requires_tun/);assert.equal(fs.existsSync(d+'/new'),false);
+});
