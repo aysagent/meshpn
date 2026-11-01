@@ -58,6 +58,35 @@ static Bytes feed(HandshakeGate& gate, Direction direction, const Bytes& b, size
   }
   return out;
 }
+static void framing_units() {
+  const auto payload = synthetic("origin.example",4096);
+  const auto original = parse(recordize(payload,{payload.size()}));
+  const auto framed = fragment_client_hello(original,512);
+  need(framed.payload == original.payload && framed.sni == original.sni && framed.identity == original.identity);
+  need(framed.wire != original.wire);
+  for(size_t at=0;at<framed.wire.size();) {
+    const auto n=u16(framed.wire,at+3);need(n>0&&n<=512);at+=5+n;
+  }
+  need(fragment_client_hello(framed,512).wire == framed.wire);
+  need(fragment_client_hello(original,0).wire == original.wire);
+  for(size_t bad : {size_t(1),size_t(127),size_t(4097)})
+    rejected([&]{fragment_client_hello(original,bad);});
+  Digest secret{};secret.fill(0x42);SniAuthorization auth(secret,"relay.example");
+  const Destination dst{{192,0,2,8},443};DestinationPolicy policy({dst});ReplayWindow replay;
+  const auto sealed=parse(auth.seal(framed,dst,1000));
+  need(auth.accept(sealed,policy,replay,1000,0).restored == framed.wire);
+  // Record framing remains authenticated: an intermediary cannot reframe a
+  // sealed prefix, even though the TLS handshake body would stay unchanged.
+  const auto changed=fragment_client_hello(sealed,256);ReplayWindow other;
+  bool bound=false;try{auth.accept(changed,policy,other,1000,0);}
+  catch(const std::runtime_error& e){bound=std::string(e.what())=="relay_hello_binding";}need(bound);
+  auto large=synthetic("origin.example",18000);
+  rejected([&]{fragment_client_hello(parse(recordize(large,{9000,large.size()-9000})),128);});
+  large=synthetic("origin.example",65405);std::vector<size_t> lengths;
+  for(size_t at=0;at<large.size();at+=16000)lengths.push_back(std::min<size_t>(16000,large.size()-at));
+  rejected([&]{fragment_client_hello(parse(recordize(large,lengths)),4096);});
+  std::cout<<"native ClientHello framing PASS: identical handshake, bounded records/bytes, strict wire binding\n";
+}
 static void authorization_units() {
   {
     const auto policy = DestinationPolicy::public_https({});
@@ -83,7 +112,13 @@ static void authorization_units() {
       {"listen",{{"ipv4","127.0.0.1"},{"port",33002}}},{"exit",{{"ipv4","8.8.8.8"},{"port",33001}}},
       {"secret_path","/fixture/secret"},{"public_name","relay.example"},
       {"destination_policy",{{"mode","public-https"},{"deny_ipv4",J::array({"1.1.1.0/24"})}}}};
-    TransparentConfig c(config);need(c.public_https);
+    TransparentConfig c(config);need(c.public_https && c.limits.hello_fragment_bytes==512);
+    for(int bytes : {0,128,512,4096}){auto next=config;next["client_hello_fragment_bytes"]=bytes;need(TransparentConfig(next).limits.hello_fragment_bytes==size_t(bytes));}
+    for(const J& value : {J(-1),J(1),J(127),J(4097),J(true),J("512"),J(512.5)}) {
+      auto bad=config;bad["client_hello_fragment_bytes"]=value;rejected([&]{TransparentConfig invalid(bad);});
+    }
+    {auto bad=config;bad["role"]="exit";bad.erase("exit");bad["replay_directory"]="/fixture/replay";
+      bad["client_hello_fragment_bytes"]=512;rejected([&]{TransparentConfig invalid(bad);});}
     rejected([&]{c.policy().check(Destination{{8,8,8,8},443});}); // endpoint address, any port
     rejected([&]{c.policy().check(Destination{{1,1,1,1},443});});
     for(const J& bad_policy : {J{{"mode","public-https"}}, J{{"mode","all"},{"deny_ipv4",J::array()}},
@@ -173,6 +208,7 @@ static void authorization_units() {
   std::cout << "native transparent auth PASS: binding, AEAD, policy, clocks, replay, capacity, concurrent admission\n";
 }
 static void units() {
+  framing_units();
   authorization_units();
   const std::string relay = "Abc123.encrypted-routing-token.public.example";
   const auto p = synthetic(); const auto wire = recordize(p, {p.size()});
@@ -333,7 +369,7 @@ static void tls_trial(const char* cert, const char* key, int version, bool retry
   // Real endpoints also see fragmented TLS records, not merely split TCP
   // reads. Split the handshake header and the SNI itself on every TLS trial.
   first_wire = recordize(h.payload, {1, h.host_at + 1, h.payload.size() - h.host_at - 2});
-  h = parse(first_wire);
+  h = fragment_client_hello(parse(first_wire),128); first_wire=h.wire;
   Digest secret{}; secret.fill(0x42); SniAuthorization auth(secret, "relay.example");
   const Destination dst{{192,0,2,8},443}; DestinationPolicy policy({dst}); ReplayWindow replay;
   auto changed = auth.seal(h, dst, 1000); auto remote = parse(changed); const auto relay = remote.sni;

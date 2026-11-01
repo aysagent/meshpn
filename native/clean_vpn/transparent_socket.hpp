@@ -48,11 +48,13 @@ inline Destination original_destination(int fd) {
 struct RelayLimits {
   uint64_t hello_ms = 5000, connect_ms = 3000, idle_ms = 60000, drain_ms = 10000, lifetime_ms = 600000;
   size_t sessions = 128, per_client = 64;
+  size_t hello_fragment_bytes = 512;
   static constexpr size_t pending = 16, queue_bytes = 256 * 1024;
   void check() const {
     require(hello_ms && hello_ms <= 5000 && connect_ms && connect_ms <= 3000 &&
             idle_ms && idle_ms <= 60000 && drain_ms && drain_ms <= 10000 &&
-            lifetime_ms && lifetime_ms <= 600000 && sessions && sessions <= 256 && per_client && per_client <= 256, "relay_limits");
+            lifetime_ms && lifetime_ms <= 600000 && sessions && sessions <= 256 && per_client && per_client <= 256 &&
+            (!hello_fragment_bytes || (hello_fragment_bytes >= 128 && hello_fragment_bytes <= 4096)), "relay_limits");
   }
 };
 inline void socket_wait(int fd, short events, uint64_t end, const std::atomic<bool>& stop, const std::shared_ptr<const ExitAdmission::Peer>& identity = {}) {
@@ -107,7 +109,10 @@ inline void relay_session(int accepted, bool client, const SniAuthorization& aut
   phase(RelayPhase::authorization);
   if (client) {
     policy.check(client_origin); target = exit;
-    prefix = auth.seal(first.hello, client_origin, wall_seconds()); output_sni = parse(prefix).sni;
+    // Framing AFTER seal would invalidate the record-prefix binding. The exit
+    // restores this framed original; the application's TLS transcript is intact.
+    const auto framed = fragment_client_hello(first.hello, limits.hello_fragment_bytes);
+    prefix = auth.seal(framed, client_origin, wall_seconds()); output_sni = parse(prefix).sni;
   } else {
     auto clock = [] { return std::make_pair(wall_seconds(), monotonic_ms()); };
     AuthorizedHello authorized;

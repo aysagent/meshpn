@@ -1,5 +1,12 @@
 # Native continuation, 2026-10-28
 
+Current candidate, **2026-11-01**:
+[ClientHello record framing before authorization](../scripts/clean-vpn-native-hello-framing-20261101.md).
+Same-binary diagnostic A/B: framed original records gave 18/20 verified TLS;
+ordinary framing then gave 11/20 and widespread timeouts. Integrate on the
+client without weakening full wire-prefix binding, fallback or retries.
+Physical engine remains 70860bb until candidate tests and binary update finish.
+
 Latest phone investigation, **2026-11-01**:
 [recorded cadence versus freshly generated Safari TLS](../scripts/clean-vpn-native-iphone-cadence-20261101.md).
 The 182 recorded hellos reproduce widespread timeouts without the phone;

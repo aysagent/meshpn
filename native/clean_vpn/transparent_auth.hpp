@@ -127,7 +127,9 @@ public:
   }
 
   // n2 uses the compact JS Base62 codec; n1 remains read-compatible on exit.
-  // Authenticate the ORIGINAL record prefix as well as destination and SNI.
+  // Authenticate the full pre-SNI-transform record prefix, destination and SNI.
+  // Any client-side reframing must precede seal; intermediaries cannot reframe
+  // an already authenticated prefix without invalidating this binding.
   Bytes seal(const Hello& hello, const Destination& dst, uint64_t wall) const {
     require(dst.port != 0, "relay_destination");
     Bytes pt{1}; push64(pt, wall); pt.insert(pt.end(), dst.ipv4.begin(), dst.ipv4.end());

@@ -141,6 +141,37 @@ inline Hello parse(const Bytes& wire) {
   return r.take();
 }
 
+// Change record framing before SNI authorization binds the wire prefix. TLS
+// handshake bytes, including randoms, key shares and extension bodies, stay
+// identical. Preserve existing smaller records and their legacy versions.
+inline Hello fragment_client_hello(const Hello& hello, size_t payload_bytes) {
+  require(payload_bytes == 0 || (payload_bytes >= 128 && payload_bytes <= 4096), "hello_fragment_config");
+  if (!payload_bytes) return hello;
+  size_t records = 0;
+  for (size_t at = 0; at < hello.wire.size();) {
+    const size_t n = u16(hello.wire, at + 3);
+    records += (n + payload_bytes - 1) / payload_bytes;
+    require(records <= record_count_limit, "hello_fragment_limit");
+    at += 5 + n;
+  }
+  const size_t wire_bytes = hello.payload.size() + 5 * records;
+  require(wire_bytes <= hello_limit, "hello_fragment_limit");
+  if (wire_bytes == hello.wire.size()) return hello;
+  Bytes wire; wire.reserve(wire_bytes);
+  for (size_t at = 0; at < hello.wire.size();) {
+    const size_t n = u16(hello.wire, at + 3);
+    for (size_t offset = 0; offset < n; offset += payload_bytes) {
+      const size_t take = std::min(payload_bytes, n - offset);
+      wire.insert(wire.end(), {22, hello.wire[at + 1], hello.wire[at + 2],
+                              uint8_t(take >> 8), uint8_t(take)});
+      wire.insert(wire.end(), hello.wire.begin() + at + 5 + offset,
+                  hello.wire.begin() + at + 5 + offset + take);
+    }
+    at += 5 + n;
+  }
+  return parse(wire);
+}
+
 // Grow/shrink exactly the record owning the first hostname byte. Restoring the
 // original SNI inverts all record boundaries, even when SNI spans records. No
 // silent re-fragmentation: impossible layouts fail before any output is emitted.

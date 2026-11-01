@@ -34,6 +34,7 @@ public:
       "combo_peek", "combo_poll", "combo_public_name", "combo_relay_limit", "combo_replay_required",
       "combo_role", "combo_sni", "combo_unknown_name", "hello_ciphers", "hello_compression",
       "hello_extension", "hello_extensions", "hello_incomplete", "hello_length", "hello_limit",
+      "hello_fragment_config", "hello_fragment_limit",
       "hello_reader_state", "hello_record", "hello_record_boundary", "hello_record_count", "hello_record_resize",
       "hello_replacement", "hello_session_id", "hello_sni", "hello_sni_missing", "hello_structure",
       "hello_type", "hello_versions", "queue_limit", "relay_accept", "relay_alert",

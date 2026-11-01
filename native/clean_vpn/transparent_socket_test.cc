@@ -550,7 +550,9 @@ int main(int argc, char** argv) {
     bssl::UniquePtr<SSL_CTX> cc(SSL_CTX_new(TLS_method())), sc(SSL_CTX_new(TLS_method())); need(cc && sc);
     need(SSL_CTX_use_certificate_chain_file(sc.get(),argv[1+offset]) && SSL_CTX_use_PrivateKey_file(sc.get(),argv[2+offset],SSL_FILETYPE_PEM));
     need(SSL_CTX_load_verify_locations(cc.get(),argv[1+offset],nullptr)); SSL_CTX_set_verify(cc.get(),SSL_VERIFY_PEER,nullptr);
-    need(SSL_CTX_set1_groups_list(cc.get(),"X25519:P-256") && SSL_CTX_set1_groups_list(sc.get(),"P-256"));
+    // A real large PQ ClientHello exercises default relay record framing,
+    // while the P-256-only origin still covers HelloRetryRequest.
+    need(SSL_CTX_set1_groups_list(cc.get(),"X25519MLKEM768:X25519:P-256") && SSL_CTX_set1_groups_list(sc.get(),"P-256"));
     if(public_mode) {
       const std::string mode=argv[1];
       if(mode=="--public-holder") {

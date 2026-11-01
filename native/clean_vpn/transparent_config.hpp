@@ -43,6 +43,13 @@ struct TransparentConfig {
     fields.insert(client ? "exit" : "replay_directory");
     if (j.contains("peers")) { require(!client && !j.contains("secret_path"), "relay_peer_config"); fields.erase("secret_path"); fields.insert("peers"); }
     if (j.contains("limits")) fields.insert("limits");
+    if (j.contains("client_hello_fragment_bytes")) {
+      const auto& value = j.at("client_hello_fragment_bytes");
+      require(client && value.is_number_integer() && value >= 0 && value <= 4096 &&
+              (value == 0 || value >= 128), "relay_hello_fragment_config");
+      fields.insert("client_hello_fragment_bytes");
+      limits.hello_fragment_bytes = value.get<size_t>();
+    }
     require(j.size() == fields.size(), "relay_config_fields");
     for (const auto& field : fields) require(j.contains(field), "relay_config_fields");
     listen = endpoint(j.at("listen"));
