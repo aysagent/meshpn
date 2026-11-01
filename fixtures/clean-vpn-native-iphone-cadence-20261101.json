@@ -2062,5 +2062,1154 @@
     "temporaryProxyStopped": true,
     "productionPortChanged": false,
     "limitation": "Identifies a difference in external443 delivery; does not identify a filtering device, prove zlib causal, or reproduce full phone application traffic."
+  },
+  "singleTls12Controls": [
+    {
+      "alpn": "h2",
+      "applicationBytes": 40,
+      "capturePort": 99101,
+      "ms": 484,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "control": "tls13-before"
+    },
+    {
+      "alpn": "http/1.1",
+      "applicationBytes": 291,
+      "capturePort": 99102,
+      "ms": 729,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.2",
+      "control": "one-tls12-brotli"
+    },
+    {
+      "alpn": "h2",
+      "applicationBytes": 40,
+      "capturePort": 99103,
+      "ms": 410,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "control": "tls13-after-brotli-tls12"
+    },
+    {
+      "alpn": "http/1.1",
+      "applicationBytes": 291,
+      "capturePort": 99104,
+      "ms": 750,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.2",
+      "control": "one-tls12-zlib"
+    },
+    {
+      "alpn": "h2",
+      "applicationBytes": 40,
+      "capturePort": 99105,
+      "ms": 464,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "control": "tls13-after-zlib-tls12"
+    }
+  ],
+  "singleTls12CausesGeneralFailureEstablished": false,
+  "serialZlib20": {
+    "samples": 20,
+    "tlsCompleteVerified": 12,
+    "rows": [
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 513,
+        "capturePort": 53327,
+        "ms": 430,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53328,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 36,
+        "capturePort": 53329,
+        "ms": 259,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53330,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53332,
+        "ms": 272,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53334,
+        "ms": 261,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 49,
+        "capturePort": 53335,
+        "ms": 267,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53336,
+        "ms": 262,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "capturePort": 53337,
+        "error": "probe_deadline",
+        "ms": 9031,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53340,
+        "error": "tls_handshake",
+        "ms": 3254
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53341,
+        "ms": 285,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53342,
+        "ms": 385,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53343,
+        "ms": 606,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "capturePort": 53344,
+        "error": "probe_deadline",
+        "ms": 9069
+      },
+      {
+        "capturePort": 53345,
+        "error": "probe_deadline",
+        "ms": 9070
+      },
+      {
+        "capturePort": 53346,
+        "error": "probe_deadline",
+        "ms": 9071
+      },
+      {
+        "capturePort": 53347,
+        "error": "probe_deadline",
+        "ms": 9073
+      },
+      {
+        "capturePort": 53348,
+        "error": "probe_deadline",
+        "ms": 9068
+      },
+      {
+        "capturePort": 53349,
+        "error": "probe_deadline",
+        "ms": 9082
+      },
+      {
+        "capturePort": 53350,
+        "error": "probe_deadline",
+        "ms": 9082
+      }
+    ],
+    "generalFailureStillReproduced": true,
+    "scope": "one diagnostic process at a time; request cadence necessarily differs; production admission unchanged"
+  },
+  "laterPacketFailureAndRecovery": {
+    "events": [
+      {
+        "utc": "2026-11-01T00:53:37.179823+00:00",
+        "state": "h2_ping_timeout",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:37.431909+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:40.433082+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:40.687446+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:40.768384+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:50.686616+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:50.938838+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:53:51.020819+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:00.938344+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:01.190628+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:01.272932+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:11.190468+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:11.442617+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:11.523369+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:21.441493+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:21.693848+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:21.775668+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:31.693369+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:31.945671+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:32.026977+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:41.948359+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:42.200469+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:42.281573+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:52.200427+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:52.454893+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:54:52.536750+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:02.454722+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:02.710093+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:02.797521+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:12.710066+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:12.964948+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:13.050962+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:22.964954+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:23.220283+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:23.306504+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:33.220422+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:33.472015+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:33.581784+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:43.471231+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:43.723868+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:43.808211+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:53.723596+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:53.976072+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:55:54.061038+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:03.975842+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:04.228582+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:04.313198+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:14.228555+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:14.481199+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:14.592303+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:24.480783+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:24.732993+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:24.843997+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:34.732128+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:34.985113+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:35.069526+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:44.984547+00:00",
+        "state": "connect_deadline",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:45.237407+00:00",
+        "state": "connecting",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:45.321533+00:00",
+        "state": "handshake",
+        "tx": 93,
+        "rx": 77
+      },
+      {
+        "utc": "2026-11-01T00:56:45.504312+00:00",
+        "state": "ready",
+        "tx": 93,
+        "rx": 77
+      }
+    ],
+    "firstFailureUtc": "2026-11-01T00:53:37.179823Z",
+    "readyAgainUtc": "2026-11-01T00:56:45.504312Z",
+    "reconnectDeadlineErrors": 19,
+    "processesRestarted": false,
+    "freshTls443AfterRecovery": {
+      "tlsVerified": true,
+      "milliseconds": 277,
+      "alpn": "h2",
+      "version": "TLSv1.3"
+    },
+    "subsequentSerialReproducerAgainFailed": true
+  },
+  "recordFramingDiagnosticAB": {
+    "sameBinarySource": "separate diagnostic only, no production engine/config change",
+    "tcpNodelay": true,
+    "sameCapturedPublicProfilesIpsAndCadence": true,
+    "freshCryptoBothVariants": true,
+    "fragmentationBeforeAuthenticationSeal": true,
+    "authenticationWireBindingPreserved": true,
+    "variant512": {
+      "samples": 20,
+      "tlsCompleteVerified": 18,
+      "errors": {
+        "none": 17,
+        "probe_deadline": 1,
+        "tls_handshake": 2
+      },
+      "maxStartDriftMs": 7,
+      "fragmentBytes": 512,
+      "rows": [
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 518,
+          "bytesAcked": 1871,
+          "capturePort": 253327,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1699,
+          "ms": 461,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53327,
+          "startDriftMs": 7
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 27,
+          "bytesAcked": 1870,
+          "capturePort": 253328,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1695,
+          "ms": 297,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53328,
+          "startDriftMs": 6
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 27,
+          "bytesAcked": 1866,
+          "capturePort": 253329,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1691,
+          "ms": 309,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53329,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1840,
+          "capturePort": 253330,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1670,
+          "ms": 302,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53330,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1839,
+          "capturePort": 253332,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1669,
+          "ms": 306,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53332,
+          "startDriftMs": 7
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1857,
+          "capturePort": 253334,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1687,
+          "ms": 385,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53334,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1857,
+          "capturePort": 253335,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1684,
+          "ms": 301,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53335,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1855,
+          "capturePort": 253336,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1682,
+          "ms": 380,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53336,
+          "startDriftMs": 2
+        },
+        {
+          "alpn": "http/1.1",
+          "bytesAcked": 1868,
+          "capturePort": 253337,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1697,
+          "ms": 9013,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53337,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1681,
+          "capturePort": 253340,
+          "error": "tls_handshake",
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1680,
+          "ms": 3276,
+          "nodelay": true,
+          "originalCapturePort": 53340,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1851,
+          "capturePort": 253341,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1680,
+          "ms": 309,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53341,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1849,
+          "capturePort": 253342,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1679,
+          "ms": 396,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53342,
+          "startDriftMs": 1
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1871,
+          "capturePort": 253343,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1684,
+          "ms": 742,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53343,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1821,
+          "capturePort": 253344,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1672,
+          "ms": 370,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53344,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1869,
+          "capturePort": 253345,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1682,
+          "ms": 650,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53345,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1869,
+          "capturePort": 253346,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1682,
+          "ms": 649,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53346,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1681,
+          "capturePort": 253347,
+          "error": "tls_handshake",
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1680,
+          "ms": 3226,
+          "nodelay": true,
+          "originalCapturePort": 53347,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1871,
+          "capturePort": 253348,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1684,
+          "ms": 647,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53348,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1871,
+          "capturePort": 253349,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1684,
+          "ms": 720,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53349,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 291,
+          "bytesAcked": 1869,
+          "capturePort": 253350,
+          "exitPort": 443,
+          "helloRecordBytes": 512,
+          "maskedHelloBytes": 1682,
+          "ms": 754,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.2",
+          "originalCapturePort": 53350,
+          "startDriftMs": 0
+        }
+      ]
+    },
+    "variant0": {
+      "samples": 20,
+      "tlsCompleteVerified": 11,
+      "errors": {
+        "none": 10,
+        "probe_deadline": 9,
+        "tls_handshake": 1
+      },
+      "maxStartDriftMs": 8,
+      "fragmentBytes": 0,
+      "rows": [
+        {
+          "alpn": "http/1.1",
+          "applicationBytes": 513,
+          "bytesAcked": 1856,
+          "capturePort": 253327,
+          "exitPort": 443,
+          "maskedHelloBytes": 1684,
+          "ms": 394,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53327,
+          "startDriftMs": 7
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 27,
+          "bytesAcked": 1855,
+          "capturePort": 253328,
+          "exitPort": 443,
+          "maskedHelloBytes": 1680,
+          "ms": 293,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53328,
+          "startDriftMs": 8
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 27,
+          "bytesAcked": 1851,
+          "capturePort": 253329,
+          "exitPort": 443,
+          "maskedHelloBytes": 1676,
+          "ms": 291,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53329,
+          "startDriftMs": 1
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1830,
+          "capturePort": 253330,
+          "exitPort": 443,
+          "maskedHelloBytes": 1660,
+          "ms": 295,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53330,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1829,
+          "capturePort": 253332,
+          "exitPort": 443,
+          "maskedHelloBytes": 1659,
+          "ms": 293,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53332,
+          "startDriftMs": 2
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1843,
+          "capturePort": 253334,
+          "exitPort": 443,
+          "maskedHelloBytes": 1673,
+          "ms": 385,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53334,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1847,
+          "capturePort": 253335,
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 380,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53335,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1847,
+          "capturePort": 253336,
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 298,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53336,
+          "startDriftMs": 2
+        },
+        {
+          "alpn": "http/1.1",
+          "bytesAcked": 1854,
+          "capturePort": 253337,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1683,
+          "ms": 9043,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53337,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1671,
+          "capturePort": 253340,
+          "error": "tls_handshake",
+          "exitPort": 443,
+          "maskedHelloBytes": 1670,
+          "ms": 3216,
+          "nodelay": true,
+          "originalCapturePort": 53340,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1841,
+          "capturePort": 253341,
+          "exitPort": 443,
+          "maskedHelloBytes": 1670,
+          "ms": 309,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53341,
+          "startDriftMs": 0
+        },
+        {
+          "alpn": "h2",
+          "applicationBytes": 40,
+          "bytesAcked": 1839,
+          "capturePort": 253342,
+          "exitPort": 443,
+          "maskedHelloBytes": 1669,
+          "ms": 505,
+          "nodelay": true,
+          "tlsCompleteVerified": true,
+          "tlsVersion": "TLSv1.3",
+          "originalCapturePort": 53342,
+          "startDriftMs": 1
+        },
+        {
+          "bytesAcked": 1675,
+          "capturePort": 253343,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9052,
+          "nodelay": true,
+          "originalCapturePort": 53343,
+          "startDriftMs": 1
+        },
+        {
+          "bytesAcked": 1663,
+          "capturePort": 253344,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1662,
+          "ms": 9046,
+          "nodelay": true,
+          "originalCapturePort": 53344,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1675,
+          "capturePort": 253345,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9029,
+          "nodelay": true,
+          "originalCapturePort": 53345,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1,
+          "capturePort": 253346,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9045,
+          "nodelay": true,
+          "originalCapturePort": 53346,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1,
+          "capturePort": 253347,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1670,
+          "ms": 9047,
+          "nodelay": true,
+          "originalCapturePort": 53347,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1,
+          "capturePort": 253348,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9045,
+          "nodelay": true,
+          "originalCapturePort": 53348,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1,
+          "capturePort": 253349,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9045,
+          "nodelay": true,
+          "originalCapturePort": 53349,
+          "startDriftMs": 0
+        },
+        {
+          "bytesAcked": 1,
+          "capturePort": 253350,
+          "error": "probe_deadline",
+          "exitPort": 443,
+          "maskedHelloBytes": 1674,
+          "ms": 9074,
+          "nodelay": true,
+          "originalCapturePort": 53350,
+          "startDriftMs": 0
+        }
+      ]
+    },
+    "scope": "one paired sequence, not full phone application acceptance; candidate needs native relay integration and regression checks"
   }
 }
