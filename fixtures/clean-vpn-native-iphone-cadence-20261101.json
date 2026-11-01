@@ -267,7 +267,8 @@
         "tlsCompleteVerified": true,
         "tlsVersion": "TLSv1.2"
       }
-    ]
+    ],
+    "certificateCompressionAlgorithm": 2
   },
   "freshSafariHelloOnly20": {
     "serverHello": 18,
@@ -1727,6 +1728,13 @@
       "count": 182,
       "ja3Matches": 182,
       "ja4Matches": 182
+    },
+    "tlsProfileDeviation": {
+      "extension": 27,
+      "recordedAlgorithm": 1,
+      "generatedAlgorithm": 2,
+      "allOtherComparedPublicExtensionFieldsMatch": true,
+      "ja3Ja4DoNotEncodeThisDifference": true
     }
   },
   "independentWanObserver": {
@@ -1769,5 +1777,290 @@
     "Captured replay and fresh series have different outcomes; no cause of blackholing proven.",
     "The fresh full series also reproduced one packet ping timeout; do not report a clean run.",
     "Raw hellos, encoded SNI, randoms, key shares, keys and pcap excluded."
-  ]
+  ],
+  "freshZlib20": {
+    "certificateCompressionAlgorithm": 1,
+    "samples": 20,
+    "tlsCompleteVerified": 12,
+    "handshakeNotCompleted": 8,
+    "applicationReadTimeoutAfterTls": 2,
+    "newKeyMaterial": true,
+    "originalIpsAndCadence": true,
+    "widespreadFailureReproduced": true,
+    "rows": [
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 513,
+        "capturePort": 53327,
+        "ms": 565,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53328,
+        "ms": 265,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53329,
+        "ms": 263,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53330,
+        "ms": 270,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53332,
+        "ms": 265,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53334,
+        "ms": 262,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53335,
+        "ms": 272,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53336,
+        "ms": 267,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "capturePort": 53337,
+        "error": "probe_deadline",
+        "ms": 9031,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53340,
+        "error": "tls_handshake",
+        "ms": 3194
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53341,
+        "ms": 486,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53342,
+        "ms": 1333,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "capturePort": 53343,
+        "error": "probe_deadline",
+        "ms": 9009,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "capturePort": 53344,
+        "error": "probe_deadline",
+        "ms": 9063
+      },
+      {
+        "capturePort": 53345,
+        "error": "probe_deadline",
+        "ms": 9079
+      },
+      {
+        "capturePort": 53346,
+        "error": "probe_deadline",
+        "ms": 9074
+      },
+      {
+        "capturePort": 53347,
+        "error": "probe_deadline",
+        "ms": 9073
+      },
+      {
+        "capturePort": 53348,
+        "error": "probe_deadline",
+        "ms": 9076
+      },
+      {
+        "capturePort": 53349,
+        "error": "probe_deadline",
+        "ms": 9069
+      },
+      {
+        "capturePort": 53350,
+        "error": "probe_deadline",
+        "ms": 9078
+      }
+    ],
+    "causeOfFailureEstablished": false
+  },
+  "recoveryChecksAfterRandomReplay": [
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9081,
+      "attempt": 1,
+      "unixSeconds": 1793493412
+    },
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9070,
+      "attempt": 2,
+      "unixSeconds": 1793493461
+    },
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9070,
+      "attempt": 3,
+      "unixSeconds": 1793493510
+    },
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9071,
+      "attempt": 4,
+      "unixSeconds": 1793493559
+    },
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9082,
+      "attempt": 5,
+      "unixSeconds": 1793493609
+    },
+    {
+      "capturePort": 53344,
+      "error": "probe_deadline",
+      "ms": 9075,
+      "attempt": 6,
+      "unixSeconds": 1793493658
+    }
+  ],
+  "directOriginCertificateControl": [
+    {
+      "host": "example.org",
+      "count": 2,
+      "verified": true,
+      "source": "VPS Python with existing Ubuntu CA"
+    },
+    {
+      "host": "iphone-ld.apple.com",
+      "verified": false,
+      "verifyCode": 20,
+      "reason": "unable to get local issuer certificate",
+      "source": "VPS Python with existing Ubuntu CA"
+    }
+  ],
+  "simultaneousFreshZlibPorts": {
+    "source": "direct Radxa diagnostic with native SniAuthorization, fresh keys and existing system CA; no client TUN",
+    "sameNativeExitListenerBehindBothPorts": 443,
+    "temporary3443": "source-only bounded TCP forwarding to existing listener443, no TLS termination",
+    "first": [
+      {
+        "bytesAcked": 1,
+        "capturePort": 99443,
+        "error": "probe_deadline",
+        "exitPort": 443,
+        "maskedHelloBytes": 1668,
+        "ms": 9047
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "bytesAcked": 1749,
+        "capturePort": 102443,
+        "exitPort": 3443,
+        "maskedHelloBytes": 1668,
+        "ms": 376,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      }
+    ],
+    "repeat": [
+      {
+        "bytesAcked": 1,
+        "capturePort": 105444,
+        "error": "probe_deadline",
+        "exitPort": 443,
+        "maskedHelloBytes": 1669,
+        "ms": 9044,
+        "repeat": 1
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "bytesAcked": 1749,
+        "capturePort": 108444,
+        "exitPort": 3443,
+        "maskedHelloBytes": 1668,
+        "ms": 388,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3",
+        "repeat": 1
+      },
+      {
+        "bytesAcked": 1,
+        "capturePort": 105445,
+        "error": "probe_deadline",
+        "exitPort": 443,
+        "maskedHelloBytes": 1668,
+        "ms": 9070,
+        "repeat": 2
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "bytesAcked": 1750,
+        "capturePort": 108445,
+        "exitPort": 3443,
+        "maskedHelloBytes": 1669,
+        "ms": 303,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3",
+        "repeat": 2
+      }
+    ],
+    "port443Attempts": 3,
+    "port443Timeouts": 3,
+    "port3443Attempts": 3,
+    "port3443VerifiedTls": 3,
+    "temporaryProxyStopped": true,
+    "productionPortChanged": false,
+    "limitation": "Identifies a difference in external443 delivery; does not identify a filtering device, prove zlib causal, or reproduce full phone application traffic."
+  }
 }

@@ -9,6 +9,17 @@ The complete fresh sequence matched all 182 generated JA3/JA4 and established
 155 verified TLS sessions, but also reproduced a simultaneous client/exit
 packet ping timeout at 00:30:18 UTC with unchanged TUN counters. Do not mark
 liveness or phone acceptance complete; compare TCP delivery and PING/ACK next.
+Content comparison then found zlib(1) in recorded extension 27 versus Brotli(2)
+in that first generator: JA3/JA4 alone missed the difference. After correcting
+the diagnostic generator, 20 fresh zlib sessions reproduced the widespread
+failure (12 verified TLS, two later read timeouts, eight handshake failures).
+The phone is unnecessary for this reproducer. Do not declare zlib the cause
+without isolating path state; no production compression/wire change was made.
+Three simultaneous direct-Radxa fresh-TLS controls then timed out on external
+443 with only SYN acknowledged, while all three via bounded source-only3443
+TCP forwarding to the SAME native443 listener verified TLS successfully.
+The temporary proxy is stopped. Investigate the external443 path/trigger;
+do not call the native relay repaired or permanently move the working port.
 Do not equate hello-only replay with a complete phone TLS/application replay,
 or request another phone test before a concrete reason/fix is established.
 
