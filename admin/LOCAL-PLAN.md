@@ -3,9 +3,17 @@
 Current candidate, **2026-11-01**:
 [ClientHello record framing before authorization](../scripts/clean-vpn-native-hello-framing-20261101.md).
 Same-binary diagnostic A/B: framed original records gave 18/20 verified TLS;
-ordinary framing then gave 11/20 and widespread timeouts. Integrate on the
-client without weakening full wire-prefix binding, fallback or retries.
-Physical engine remains 70860bb until candidate tests and binary update finish.
+ordinary framing then gave 11/20 and widespread timeouts. Client 1888a5f is
+now installed on Radxa after local and physical CTest 14/14 plus real TLS/socket
+suites. Updater completed, protected files match, guard/network remain active;
+exit binary stays 70860bb. The installed-client USB Safari/zlib sequence completed: 153/182 verified TLS,
+29 origin/certificate handshake errors, one later HTTP read timeout. All 182
+public hello semantics match. No packet reconnect during the sequence;
+Chrome Speedtest and Yandex measurements both completed (44.49/44.43 and
+26.07/95.10 Mbps); HTTPS443 2/8MiB down +2MiB up passed independently.
+Keep residual origin failures and prior packet-liveness history explicit.
+No wire-binding weakening, fallback or retries were added. Do not request
+another phone test in place of completing this independent reproducer.
 
 Latest phone investigation, **2026-11-01**:
 [recorded cadence versus freshly generated Safari TLS](../scripts/clean-vpn-native-iphone-cadence-20261101.md).

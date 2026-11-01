@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-native-clienthello-framing-physical",
+  "date": "2026-11-01",
+  "clientCommit": "1888a5f",
+  "clientSha256": "6dd0dc966b65b97c810f64ed25877ed176cc6e8698e289c4b8231dcf58a87e7a",
+  "exitBinaryCommit": "70860bb",
+  "endpointPort": 443,
+  "labCtest": {
+    "passed": 14,
+    "total": 14
+  },
+  "radxaCtest": {
+    "passed": 14,
+    "total": 14
+  },
+  "protectedFiles": {
+    "checked": 5,
+    "allMatched": true
+  },
+  "updatePending": false,
+  "networkOwnerPidUnchanged": true,
+  "guardActive": true,
+  "installedClientSequence": {
+    "samples": 182,
+    "tlsCompleteVerified": 153,
+    "errors": {
+      "none": 152,
+      "probe_deadline": 1,
+      "tls_handshake": 29
+    },
+    "failures": [
+      {
+        "host": "chat.m5stack.com",
+        "reason": "tls_handshake",
+        "count": 8
+      },
+      {
+        "host": "example.org",
+        "reason": "certificate_verify_failed",
+        "count": 2
+      },
+      {
+        "host": "iphone-ld.apple.com",
+        "reason": "certificate_verify_failed",
+        "count": 17
+      },
+      {
+        "host": "m.avito.ru",
+        "reason": "tls_handshake",
+        "count": 2
+      }
+    ],
+    "publicSemanticsChecked": 182,
+    "publicSemanticsDifferences": 0,
+    "packetReadyEvents": 1,
+    "packetSessionEnds": 0,
+    "relayActiveAfter": 0,
+    "relayPendingAfter": 0,
+    "rssKiBAfter": 5508,
+    "openFdsAfter": 39
+  },
+  "observer": {
+    "kernelDrops": 0,
+    "carrierProfileStatus": "matched",
+    "carrierProfileDifferences": [],
+    "carrierJa4": "t13d0915h2_f91f431d341e_54d72502093d",
+    "safariHellos": 49
+  },
+  "dns": {
+    "usbPassed": 4,
+    "nativeStubPassed": 4
+  },
+  "limitations": [
+    "not-a-physical-iPhone-acceptance",
+    "not-a-browser-equivalence-claim",
+    "one-full-installed-client-sequence",
+    "prior-packet-liveness-failures-remain-documented",
+    "generic-origin-handshake-errors-not-yet-isolated",
+    "h2-application-bytes-may-be-only-SETTINGS",
+    "deliberate-probe-closure-does-not-yield-zero-relay-errors"
+  ],
+  "https443Bulk": [
+    {
+      "direction": "download",
+      "bytes": 2097152,
+      "http": 200,
+      "verifyResult": 0
+    },
+    {
+      "direction": "download",
+      "bytes": 8388608,
+      "http": 200,
+      "verifyResult": 0
+    },
+    {
+      "direction": "upload",
+      "bytes": 2097152,
+      "http": 200,
+      "verifyResult": 0
+    }
+  ],
+  "speedtest": {
+    "completed": true,
+    "downloadMbps": 44.49,
+    "uploadMbps": 44.43,
+    "pingMs": 88,
+    "pathNote": "Chrome via USB proxy; speed measurement WebSockets also use packet branch"
+  },
+  "originControls": {
+    "avitoPreviouslyFailed": 2,
+    "avitoVerifiedOnSeparateControl": 2,
+    "exampleOrgAndAppleVerifyCode": 20,
+    "exampleOrgAndAppleVerifyReason": "unable to get local issuer certificate",
+    "chatM5stackSslErrorCode": 5,
+    "chatM5stackNote": "EOF before completed TLS; still not isolated"
+  },
+  "yandexMeasure": {
+    "http": 200,
+    "completed": true,
+    "downloadMbps": 26.07,
+    "uploadMbps": 95.1,
+    "pingMs": 105
+  },
+  "afterBrowserCleanup": {
+    "sameClientPid": true,
+    "packetReadyEvents": 1,
+    "packetSessionEnds": 0,
+    "relayAccepted": 389,
+    "relayActive": 0,
+    "relayPending": 0,
+    "relayAdmissionDropped": 0,
+    "relayPeakQueueBytes": 147456,
+    "threads": 3,
+    "openFds": 9,
+    "rssKiB": 9040,
+    "dnsAnswers": 162,
+    "dnsQueries": 162,
+    "dnsServfail": 0,
+    "dnsUpstreamTimeouts": 3,
+    "temporaryProxyExited": true
+  }
+}
