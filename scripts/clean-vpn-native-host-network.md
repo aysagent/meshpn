@@ -9,6 +9,25 @@ owner для проверенного Radxa IPv4-профиля. Старый No
 не анализируется и не восстанавливается. Node остаётся только control plane;
 TUN payload, TLS и DNS обслуживает C++ engine.
 
+## USB/DHCP на новой плате
+
+Native installer предполагает уже работающий USB Ethernet и DHCP. Он не
+создаёт gadget и не исправляет его автозапуск. Перед развёртыванием проверить
+выдачу IP после загрузки, порядок DHCP/gadget и отсутствие address flush,
+конкурирующего с rescue. Для известной Radxa добавлен отдельный
+[проверяемый installer порядка загрузки](clean-vpn-usb-boot-ready.md):
+
+```bash
+sudo python3 scripts/clean-vpn-usb-boot-order.py
+sudo python3 scripts/clean-vpn-usb-boot-order.py --apply
+```
+
+Он применяется только к точному известному скрипту; другой скрипт/плата требует
+своей подготовки. Автоматического применения из native installer пока нет.
+На vendor kernel этой Radxa usb0 появляется только после UDC bind — переносить
+назначение адреса перед bind нельзя. Одного успешного VPN smoke недостаточно
+для проверки USB boot.
+
 ## Ограниченный контракт
 
 - boring-tls client, `tun0`, peer IPv4 `10.99.0.2–10.99.0.254/32` (по умолчанию `.2`), MTU 1400, native DNS включён;

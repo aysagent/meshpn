@@ -1,5 +1,16 @@
 # Native continuation, 2026-10-28
 
+Latest user confirmation, **2026-11-02**: VPN now works on the phone. Separate
+intermittent USB IP assignment after boot remains under investigation; see
+[physical DHCP/gadget ordering repair](../scripts/clean-vpn-usb-boot-ready.md).
+Final narrow fix passed a real Mac USB reboot/DHCP/DNS/TLS check. The first
+pre-bind-address candidate failed on the vendor kernel and was fully reverted.
+Next provisioning work: integrate USB readiness/ownership checks into new-board
+preflight; the fixed-profile USB installer is currently separate, not universal.
+Clock bootstrap also needs bounded transient-failure handling: one early SSH
+RTT timeout currently consumes the only boot attempt. Operator authenticated
+clock correction restored this board; no automatic retry change was installed.
+
 Current candidate, **2026-11-01**:
 [ClientHello record framing before authorization](../scripts/clean-vpn-native-hello-framing-20261101.md).
 Same-binary diagnostic A/B: framed original records gave 18/20 verified TLS;
