@@ -1,0 +1,1773 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-iphone-cadence-comparison",
+  "date": "2026-11-01",
+  "originalIphoneFailureResolved": false,
+  "phoneRequestedAgain": false,
+  "automaticFallbackAdded": false,
+  "macSystemNetworkChanged": false,
+  "exitPort": 443,
+  "nativeCommit": "70860bb",
+  "recordedHellos": {
+    "full": {
+      "samples": 182,
+      "completed": 182,
+      "seconds": 280.41,
+      "results": {
+        "ServerHello": 13,
+        "EOFError": 1,
+        "TimeoutError": 168
+      },
+      "maxStartDriftMs": 1126,
+      "scope": "Captured ClientHello cadence only, not full TLS/application replay. All sockets bound to existing Mac USB interface. No fallback."
+    },
+    "prefix20": {
+      "samples": 20,
+      "completed": 20,
+      "seconds": 24.56,
+      "results": {
+        "ServerHello": 13,
+        "EOFError": 1,
+        "TimeoutError": 6
+      },
+      "maxStartDriftMs": 10,
+      "scope": "Captured ClientHello cadence only, not full TLS/application replay. All sockets bound to existing Mac USB interface. No fallback."
+    },
+    "prefix20WithNewRandom": {
+      "samples": 20,
+      "completed": 20,
+      "seconds": 24.55,
+      "results": {
+        "ServerHello": 13,
+        "EOFError": 1,
+        "TimeoutError": 6
+      },
+      "maxStartDriftMs": 10,
+      "scope": "Recorded hello with new random, original cadence; keys not regenerated, no TLS Finished. USB only, no fallback."
+    },
+    "limitation": "Replay stops after ServerHello; captured ephemeral private keys are unavailable."
+  },
+  "duringRecordedFailure": {
+    "newSocketsBytesAcked": 1,
+    "exitFirstSegmentBytes": 1448,
+    "exitAckVisibleAtClient": false,
+    "readVsPeek": {
+      "diagnosticExternalPort": 443,
+      "syntheticMss": 1232,
+      "receivedFirstSegmentBytesBothModes": 1220,
+      "expectedHelloBytes": 1684,
+      "results": [
+        {
+          "mode": "read",
+          "probe": {
+            "result": "TimeoutError",
+            "ms": 7091,
+            "acked": 1
+          }
+        },
+        {
+          "mode": "peek",
+          "probe": {
+            "result": "TimeoutError",
+            "ms": 7090,
+            "acked": 1
+          }
+        },
+        {
+          "mode": "read",
+          "probe": {
+            "result": "TimeoutError",
+            "ms": 7086,
+            "acked": 1
+          }
+        },
+        {
+          "mode": "peek",
+          "probe": {
+            "result": "TimeoutError",
+            "ms": 7091,
+            "acked": 1
+          }
+        }
+      ],
+      "temporaryRuleRemoved": true,
+      "temporaryListenerStopped": true
+    },
+    "smallerMssSplitShortTlsAndPlaintextAlsoFailed": true,
+    "laterSameBytesPassed": true,
+    "causeEstablished": false
+  },
+  "fullCfnetwork20": {
+    "standardCertificateVerification": true,
+    "proxyFailover": false,
+    "currentDnsRatherThanOriginalIps": true,
+    "httpResponses": 17,
+    "errors": {
+      "timeout": 1,
+      "tls": 2
+    },
+    "expectedExitIpBeforeAndAfter": true
+  },
+  "freshSafari20": {
+    "tlsVerified": 18,
+    "applicationReadTimeoutAfterTls": 1,
+    "handshakeErrors": 2,
+    "rows": [
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 523,
+        "capturePort": 53327,
+        "ms": 761,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 151,
+        "capturePort": 53328,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53329,
+        "ms": 257,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53330,
+        "ms": 261,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53332,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53334,
+        "ms": 266,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 49,
+        "capturePort": 53335,
+        "ms": 256,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53336,
+        "ms": 259,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "capturePort": 53337,
+        "error": "probe_deadline",
+        "ms": 9029,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53340,
+        "error": "tls_handshake",
+        "ms": 3190
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53341,
+        "ms": 268,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53342,
+        "ms": 376,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53343,
+        "ms": 609,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 49,
+        "capturePort": 53344,
+        "ms": 331,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53345,
+        "ms": 603,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53346,
+        "ms": 590,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "capturePort": 53347,
+        "error": "tls_handshake",
+        "ms": 3189
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53348,
+        "ms": 609,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53349,
+        "ms": 612,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53350,
+        "ms": 584,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      }
+    ]
+  },
+  "freshSafariHelloOnly20": {
+    "serverHello": 18,
+    "eof": 2,
+    "generalNewConnectionFailure": false,
+    "tlsFinished": false
+  },
+  "singleRecordedMavitoControls": [
+    {
+      "alpn": "h2",
+      "applicationBytes": 40,
+      "capturePort": 53344,
+      "ms": 1189,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "mode": "fresh-complete-before"
+    },
+    {
+      "mode": "recorded-with-new-random",
+      "result": "ServerHello",
+      "ms": 494
+    },
+    {
+      "alpn": "h2",
+      "applicationBytes": 40,
+      "capturePort": 53344,
+      "ms": 898,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "mode": "fresh-complete-after-new-random"
+    },
+    {
+      "mode": "recorded-unchanged",
+      "result": "ServerHello",
+      "ms": 1734
+    },
+    {
+      "alpn": "h2",
+      "applicationBytes": 49,
+      "capturePort": 53344,
+      "ms": 341,
+      "tlsCompleteVerified": true,
+      "tlsVersion": "TLSv1.3",
+      "mode": "fresh-complete-after-recorded"
+    }
+  ],
+  "freshSafariFullSequence": {
+    "samples": 182,
+    "cadenceSeconds": 273.40724301338196,
+    "originalIps": true,
+    "freshRandomSessionIdAndKeyShares": true,
+    "certificateTrust": "existing /etc/ssl/cert.pem, peer chain and hostname checked; no trust overrides",
+    "tlsCompleteVerified": 155,
+    "applicationReadTimeoutAfterTls": 1,
+    "handshakeErrors": 27,
+    "certificateVerifyErrors": 19,
+    "otherHandshakeErrors": 8,
+    "wholeSequenceNewConnectionBlackout": false,
+    "httpSuccessClaim": false,
+    "rows": [
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 513,
+        "capturePort": 53327,
+        "ms": 766,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53328,
+        "ms": 277,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 27,
+        "capturePort": 53329,
+        "ms": 355,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53330,
+        "ms": 356,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53332,
+        "ms": 280,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53334,
+        "ms": 272,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53335,
+        "ms": 262,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53336,
+        "ms": 258,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "capturePort": 53337,
+        "error": "probe_deadline",
+        "ms": 9025,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53340,
+        "error": "tls_handshake",
+        "ms": 3189
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53341,
+        "ms": 267,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53342,
+        "ms": 352,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53343,
+        "ms": 596,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53344,
+        "ms": 338,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53345,
+        "ms": 3391,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53346,
+        "ms": 635,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "capturePort": 53347,
+        "error": "tls_handshake",
+        "ms": 3244
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53348,
+        "ms": 623,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53349,
+        "ms": 612,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53350,
+        "ms": 612,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53351,
+        "ms": 334,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53352,
+        "ms": 603,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53353,
+        "ms": 590,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53354,
+        "ms": 595,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53355,
+        "ms": 442,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53356,
+        "ms": 340,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53357,
+        "ms": 615,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53358,
+        "ms": 466,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53359,
+        "ms": 610,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 49,
+        "capturePort": 53360,
+        "ms": 331,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53361,
+        "ms": 600,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53362,
+        "ms": 608,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53363,
+        "ms": 611,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53364,
+        "ms": 463,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53365,
+        "ms": 590,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53366,
+        "ms": 346,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53367,
+        "ms": 726,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53368,
+        "ms": 707,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53369,
+        "ms": 625,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 291,
+        "capturePort": 53370,
+        "ms": 654,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.2"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53371,
+        "ms": 352,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53374,
+        "error": "tls_handshake",
+        "ms": 3194
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53376,
+        "ms": 539,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53377,
+        "ms": 535,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53378,
+        "ms": 350,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53379,
+        "ms": 340,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53380,
+        "ms": 482,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53381,
+        "ms": 342,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53382,
+        "ms": 352,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53383,
+        "error": "tls_handshake",
+        "ms": 3249
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53384,
+        "ms": 451,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53385,
+        "ms": 468,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53386,
+        "ms": 347,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53388,
+        "ms": 471,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53389,
+        "ms": 423,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53390,
+        "ms": 355,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53391,
+        "ms": 545,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53392,
+        "ms": 477,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53393,
+        "ms": 344,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53394,
+        "ms": 540,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53395,
+        "ms": 352,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53396,
+        "ms": 424,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53397,
+        "ms": 271,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53398,
+        "ms": 282,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53399,
+        "ms": 343,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 61,
+        "capturePort": 53400,
+        "ms": 451,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53401,
+        "ms": 344,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53402,
+        "ms": 465,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 574,
+        "capturePort": 53403,
+        "ms": 579,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53404,
+        "ms": 334,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53405,
+        "ms": 447,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53406,
+        "ms": 262,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 574,
+        "capturePort": 53407,
+        "ms": 621,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53408,
+        "ms": 277,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 575,
+        "capturePort": 53409,
+        "ms": 560,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 569,
+        "capturePort": 53410,
+        "ms": 610,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53411,
+        "ms": 1391,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53412,
+        "ms": 457,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53413,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 570,
+        "capturePort": 53414,
+        "ms": 957,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53415,
+        "ms": 728,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53416,
+        "ms": 460,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 569,
+        "capturePort": 53417,
+        "ms": 582,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53418,
+        "ms": 353,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53419,
+        "ms": 454,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53421,
+        "ms": 274,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 569,
+        "capturePort": 53422,
+        "ms": 603,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53423,
+        "ms": 266,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 570,
+        "capturePort": 53424,
+        "ms": 566,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 569,
+        "capturePort": 53425,
+        "ms": 615,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53426,
+        "ms": 334,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53427,
+        "ms": 449,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53428,
+        "ms": 260,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "http/1.1",
+        "applicationBytes": 570,
+        "capturePort": 53429,
+        "ms": 359,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53430,
+        "ms": 340,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53431,
+        "ms": 557,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53433,
+        "ms": 340,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53435,
+        "ms": 272,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 61,
+        "capturePort": 53436,
+        "ms": 976,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53437,
+        "ms": 274,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53438,
+        "ms": 470,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 49,
+        "capturePort": 53439,
+        "ms": 351,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53440,
+        "ms": 559,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53442,
+        "ms": 2312,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53444,
+        "ms": 271,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53445,
+        "ms": 275,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53446,
+        "ms": 468,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53447,
+        "ms": 462,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53448,
+        "ms": 362,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53449,
+        "ms": 482,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53450,
+        "error": "tls_handshake",
+        "ms": 3249
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53454,
+        "ms": 272,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53455,
+        "ms": 277,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 61,
+        "capturePort": 53456,
+        "ms": 549,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53457,
+        "ms": 464,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53458,
+        "ms": 365,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53459,
+        "ms": 471,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53460,
+        "error": "tls_handshake",
+        "ms": 3198
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53462,
+        "ms": 271,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53463,
+        "ms": 282,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53464,
+        "ms": 448,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53465,
+        "ms": 629,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53466,
+        "ms": 264,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53467,
+        "ms": 447,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53468,
+        "error": "tls_handshake",
+        "ms": 3192
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53470,
+        "ms": 267,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53471,
+        "ms": 276,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53472,
+        "ms": 451,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53473,
+        "ms": 477,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53475,
+        "ms": 271,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53476,
+        "ms": 472,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53477,
+        "error": "tls_handshake",
+        "ms": 3196
+      },
+      {
+        "capturePort": 53481,
+        "error": "tls_handshake",
+        "ms": 182,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53482,
+        "error": "tls_handshake",
+        "ms": 186,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53483,
+        "ms": 463,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53484,
+        "ms": 461,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53485,
+        "ms": 452,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53486,
+        "ms": 452,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53487,
+        "ms": 448,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53488,
+        "ms": 263,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53489,
+        "ms": 456,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53490,
+        "ms": 274,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53491,
+        "ms": 457,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53492,
+        "ms": 458,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53493,
+        "ms": 266,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53494,
+        "ms": 444,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53496,
+        "ms": 455,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53497,
+        "ms": 461,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 39,
+        "capturePort": 53498,
+        "ms": 534,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53499,
+        "error": "tls_handshake",
+        "ms": 195,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53500,
+        "error": "tls_handshake",
+        "ms": 247,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53501,
+        "error": "tls_handshake",
+        "ms": 188,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53502,
+        "error": "tls_handshake",
+        "ms": 185,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53504,
+        "error": "tls_handshake",
+        "ms": 185,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53505,
+        "error": "tls_handshake",
+        "ms": 238,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53506,
+        "error": "tls_handshake",
+        "ms": 239,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53507,
+        "error": "tls_handshake",
+        "ms": 183,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53508,
+        "error": "tls_handshake",
+        "ms": 277,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53509,
+        "error": "tls_handshake",
+        "ms": 187,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53510,
+        "error": "tls_handshake",
+        "ms": 247,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53511,
+        "error": "tls_handshake",
+        "ms": 194,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53512,
+        "error": "tls_handshake",
+        "ms": 187,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53513,
+        "ms": 353,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53514,
+        "ms": 387,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53515,
+        "ms": 356,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53516,
+        "ms": 365,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53517,
+        "ms": 389,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53518,
+        "error": "tls_handshake",
+        "ms": 186,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53519,
+        "error": "tls_handshake",
+        "ms": 183,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "capturePort": 53520,
+        "error": "tls_handshake",
+        "ms": 182,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53521,
+        "ms": 387,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53522,
+        "ms": 359,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "capturePort": 53523,
+        "error": "tls_handshake",
+        "ms": 182,
+        "tlsError": "error:1000007d:SSL routines:OPENSSL_internal:CERTIFICATE_VERIFY_FAILED"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53524,
+        "ms": 355,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53525,
+        "ms": 378,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53526,
+        "ms": 374,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53527,
+        "ms": 376,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53528,
+        "ms": 357,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53529,
+        "ms": 886,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53530,
+        "ms": 354,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53531,
+        "ms": 403,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      },
+      {
+        "alpn": "h2",
+        "applicationBytes": 40,
+        "capturePort": 53532,
+        "ms": 360,
+        "tlsCompleteVerified": true,
+        "tlsVersion": "TLSv1.3"
+      }
+    ],
+    "generatedProfileChecks": {
+      "count": 182,
+      "ja3Matches": 182,
+      "ja4Matches": 182
+    }
+  },
+  "independentWanObserver": {
+    "status": "complete",
+    "seconds": 60,
+    "kernelDrops": 0,
+    "connections": 62,
+    "ja3": {
+      "ecdf4f49dd59effc439639da29186671": 58,
+      "6618231821d2d40f8d1859f5a43a0307": 4
+    },
+    "ja4": {
+      "t13d2013h2_a09f3c656075_7f0f34a4126d": 58,
+      "t13d2014h2_a09f3c656075_d0a99439f9b1": 4
+    },
+    "scope": "first cold ClientHello, not full Safari or HTTP/2 identity"
+  },
+  "newPacketLivenessFailure": {
+    "clientPid": 57844,
+    "exitPid": 894438,
+    "clientAndExitState": "h2_ping_timeout",
+    "timeUtc": "2026-11-01T00:30:18Z",
+    "readyAgainUtc": "2026-11-01T00:30:19Z",
+    "processesRestarted": false,
+    "clientReadyEventsBefore": 1,
+    "clientReadyEventsAfter": 2,
+    "clientSessionEndsBefore": 0,
+    "clientSessionEndsAfter": 1,
+    "tunPacketCountersDuringFreshSequence": {
+      "tx": 92,
+      "rx": 76,
+      "delta": 0
+    },
+    "causeEstablished": false,
+    "notSuccessfulLivenessAcceptance": true
+  },
+  "limitations": [
+    "Fresh TLS traffic differs from captured key material and application requests.",
+    "H2 application bytes can be SETTINGS, not a successful page response.",
+    "Captured replay and fresh series have different outcomes; no cause of blackholing proven.",
+    "The fresh full series also reproduced one packet ping timeout; do not report a clean run.",
+    "Raw hellos, encoded SNI, randoms, key shares, keys and pcap excluded."
+  ]
+}

@@ -172,5 +172,652 @@
     "wanReceivedTlsBytes": 0,
     "relationToFix": "This first recorded timeout is not explained by the reproduced early application FIN defect."
   },
-  "deployment": "candidate passed isolated lab; physical engine replacement not yet performed"
+  "deployment": {
+    "nativeCommit": "70860bb",
+    "method": "installed binary updater with independent recovery",
+    "exit": {
+      "sha256": "50315376d57d396cbbf9998ca42e85b72dc0f8686036722b711efaa76833b0fe",
+      "pid": 894438,
+      "ctest": "14/14",
+      "pending": false,
+      "protectedFilesUnchanged": 3,
+      "temporaryBuildSwapRemoved": true
+    },
+    "client": {
+      "sha256": "30ce7552bf93f01fa0d31aa152051c00886125f2e9307a0e45c2ead3c25f71a0",
+      "pidAfterUpdate": 50361,
+      "pidAfterControlledRestart": 57844,
+      "ctest": "14/14",
+      "pending": false,
+      "protectedFilesUnchanged": 5
+    },
+    "guard": true,
+    "networkOwnerPidUnchanged": 736,
+    "workingExitPort": 443,
+    "macSystemNetworkChanged": false
+  },
+  "physicalUsbBeforeClientUpdate": {
+    "clientNativeCommit": "18644a2",
+    "exitNativeCommit": "70860bb",
+    "normalAndSplit": [
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 190
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 204
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 180
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 207
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 182
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 203
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "single-write",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 187
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "phone-size-split",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 209
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "single-write",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 187
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "phone-size-split",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 266
+      }
+    ],
+    "halfclose": [
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "result": "EOFError",
+        "ms": 87
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "result": "EOFError",
+        "ms": 89
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "result": "EOFError",
+        "ms": 90
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "write-half-close",
+        "helloBytes": 1534,
+        "result": "EOFError",
+        "ms": 86
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "write-half-close",
+        "helloBytes": 1534,
+        "result": "EOFError",
+        "ms": 86
+      }
+    ]
+  },
+  "physicalUsbAfterBothUpdates": [
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53397,
+      "mode": "single-write",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 1566
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53397,
+      "mode": "phone-size-split",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 211
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53397,
+      "mode": "write-half-close",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 182
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53398,
+      "mode": "single-write",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 181
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53398,
+      "mode": "phone-size-split",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 208
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53398,
+      "mode": "write-half-close",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 178
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53406,
+      "mode": "single-write",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 183
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53406,
+      "mode": "phone-size-split",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 217
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53406,
+      "mode": "write-half-close",
+      "helloBytes": 1540,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 189
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53481,
+      "mode": "single-write",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 185
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53481,
+      "mode": "phone-size-split",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 207
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53481,
+      "mode": "write-half-close",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 240
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53482,
+      "mode": "single-write",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 184
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53482,
+      "mode": "phone-size-split",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 216
+    },
+    {
+      "source": "captured-iPhone-ClientHello",
+      "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+      "originalCapturePort": 53482,
+      "mode": "write-half-close",
+      "helloBytes": 1534,
+      "recordType": 22,
+      "serverRecordBytes": 1215,
+      "result": "ServerHello",
+      "ms": 182
+    }
+  ],
+  "independentPacketProfileObserver": {
+    "status": "complete",
+    "kernelDrops": 0,
+    "profiles": [
+      {
+        "status": "matched",
+        "profileId": "chromium-156-bounded-cold-v1",
+        "ja4": "t13d0915h2_f91f431d341e_54d72502093d",
+        "differences": [],
+        "scope": "first-cold-ClientHello-fields-only-not-browser-or-HTTP2-equivalence"
+      }
+    ]
+  },
+  "ordinaryDesktopChecks": {
+    "dnsUsb": "A/AAAA UDP/TCP 4/4",
+    "dnsNativeStub": "10.99.0.2:1053 A/AAAA UDP/TCP 4/4",
+    "diagnosticCorrection": "Initial direct-stub probe incorrectly targeted 127.0.0.1; connection refused there was a diagnostic addressing error, not a VPN regression.",
+    "https443Transfers": [
+      {
+        "flow": "HTTPS443-down",
+        "generatedBytes": 2097152,
+        "exit": 0,
+        "httpTransfer": "200 2097152 0",
+        "error": "",
+        "seconds": 1.29
+      },
+      {
+        "flow": "HTTPS443-up",
+        "generatedBytes": 2097152,
+        "exit": 0,
+        "httpTransfer": "200 0 2097152",
+        "error": "",
+        "seconds": 1.28
+      },
+      {
+        "flow": "HTTPS443-down",
+        "generatedBytes": 8388608,
+        "exit": 0,
+        "httpTransfer": "200 8388608 0",
+        "error": "",
+        "seconds": 1.45
+      }
+    ],
+    "pages": [
+      {
+        "url": "https://example.org",
+        "http": 200,
+        "title": "Example Domain"
+      },
+      {
+        "url": "https://internet.yandex.ru",
+        "http": 200,
+        "title": "Яндекс Интернетометр — проверка скорости интернета"
+      }
+    ],
+    "speedtest": {
+      "browser": "Chrome/156.0.8078.79",
+      "downloadMbps": 43.48,
+      "uploadMbps": 47.72,
+      "pingMs": 83,
+      "completed": true,
+      "quic": false,
+      "bulkScope": "Speedtest WebSockets on 8080 use the packet branch; HTTPS443 transfers separately exercise transparent.",
+      "abortedRequestsPresent": true,
+      "iphoneAcceptance": false
+    }
+  },
+  "unresolvedPacketEpisode": {
+    "clientPid": 50361,
+    "readyAt": "2026-10-31T23:30:43.711886Z",
+    "h2PingTimeoutAt": "2026-10-31T23:31:42.780159Z",
+    "exitH2PingTimeoutAt": "2026-10-31T23:31:42.821971Z",
+    "clientConnectDeadlineAt": "2026-10-31T23:31:46.032870Z",
+    "readyAgainAt": "2026-10-31T23:31:47.568652Z",
+    "happenedBeforeSpeedtestWithTunTxRxZero": true,
+    "causeEstablished": false,
+    "capturedFailureWindow": false,
+    "note": "Independent profile observer had already finished; later successful speed test does not erase this event."
+  },
+  "controlledIdleRepeat": {
+    "clientPid": 57844,
+    "captureSeconds": 100,
+    "capturedPhoneHelloRows": [
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 240
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 216
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53397,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 241
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 187
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 212
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53398,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 197
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "single-write",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 192
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "phone-size-split",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 216
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53406,
+        "mode": "write-half-close",
+        "helloBytes": 1540,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 240
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "single-write",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 189
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "phone-size-split",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 221
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53481,
+        "mode": "write-half-close",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 190
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "single-write",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 190
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "phone-size-split",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 206
+      },
+      {
+        "source": "captured-iPhone-ClientHello",
+        "path": "Mac process bound to USB -> installed native client -> installed native exit:443 -> original IP",
+        "originalCapturePort": 53482,
+        "mode": "write-half-close",
+        "helloBytes": 1534,
+        "recordType": 22,
+        "serverRecordBytes": 1215,
+        "result": "ServerHello",
+        "ms": 242
+      }
+    ],
+    "finalState": {
+      "vpn": {
+        "MainPID": "57844",
+        "StatusText": "ready",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "static",
+        "InvocationID": "75ec690ed6ab4e70a176df37669d325b"
+      },
+      "network": {
+        "MainPID": "736",
+        "StatusText": "",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled",
+        "InvocationID": "02cffc8b90ec47848174def57a1ac4d3"
+      },
+      "guard": true,
+      "packet": {
+        "ready_events": 1,
+        "session_ends": 0,
+        "lastEnd": null
+      },
+      "relay": {
+        "active": 0,
+        "pending": 0,
+        "broken": false,
+        "completed": 4,
+        "failed": 11
+      },
+      "dns": {
+        "queries": 0,
+        "answers": 0,
+        "servfail": 0,
+        "private_queries": 0,
+        "upstream_attempts": 0,
+        "upstream_errors": 0,
+        "upstream_timeouts": 0
+      }
+    },
+    "kernelDropsBothSides": 0,
+    "nativeDnsAfterIdle": "A/AAAA UDP/TCP 4/4",
+    "httpsAfterIdle": "bound to tun0, observed expected VPS exit IP",
+    "limitations": "A bounded passing repeat; does not establish a fix for the prior intermittent timeout. Raw ClientHello-only probes intentionally do not complete TLS and contribute relay failures."
+  }
 }

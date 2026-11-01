@@ -1,5 +1,17 @@
 # Native continuation, 2026-10-28
 
+Latest phone investigation, **2026-11-01**:
+[recorded cadence versus freshly generated Safari TLS](../scripts/clean-vpn-native-iphone-cadence-20261101.md).
+The 182 recorded hellos reproduce widespread timeouts without the phone;
+fresh TLS controls with the same public Safari parameters are checked separately.
+An independent WAN observer confirms the expected Safari JA3/JA4 on 62 hellos.
+The complete fresh sequence matched all 182 generated JA3/JA4 and established
+155 verified TLS sessions, but also reproduced a simultaneous client/exit
+packet ping timeout at 00:30:18 UTC with unchanged TUN counters. Do not mark
+liveness or phone acceptance complete; compare TCP delivery and PING/ACK next.
+Do not equate hello-only replay with a complete phone TLS/application replay,
+or request another phone test before a concrete reason/fix is established.
+
 Latest native repair, **2026-11-01**: [pre-ServerHello FIN handling](../scripts/clean-vpn-native-prehello-fin-20261101.md).
 The new real TCP regression fails on the old code and passes on the candidate
 for transparent and combo. CTest 14/14 and real TLS/replay/socket tests pass.
@@ -10,8 +22,9 @@ The user explicitly asked to finish analysis/fixes without another phone retest.
 
 Latest investigation, **2026-11-01**: [iPhone USB/WAN and JS/native comparison](../scripts/clean-vpn-native-iphone-investigation-20261101.md).
 Phone acceptance remains open. For 182 captured pairs the JS rebuild with the
-same SNI matches native byte for byte; later read/peek and wire probes no longer
-reproduce the earlier 443 loss. These controls are not an iPhone repair.
+same SNI matches native byte for byte. Later single controls passed, but a full
+recorded cadence subsequently reproduced 443 loss; read and peek both missed
+the continuation during that failure. These controls are not an iPhone repair.
 The user explicitly rejected automatic transparent-to-boring fallback; do not add it.
 Separate admin fixes accept static-page query strings and expose combo relay
 counters alongside packet readiness. No native wire-format change is justified
