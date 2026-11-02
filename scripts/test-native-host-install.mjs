@@ -15,10 +15,13 @@ test('host installer bundles standalone owner, publishes disabled network activa
   put('/host',JSON.stringify({version:1,guard_unit:'guard.service',guard_script:'/usr/local/bin/guard.sh'}));
   const options={root,name:'daily',binary:root+'/engine',config:root+'/config',hostProfile:root+'/host'};
   assert.throws(()=>installNative({...options,networkUnit:'other.service'}),/conflicting_host_dependencies/);
-  assert.equal(installNative(options).status,'eligible');assert.equal(fs.existsSync(root+'/opt/clean-vpn-native'),false);
-  const result=installNative({...options,apply:true});assert.equal(result.activation,'native-daily-network.service');
+  assert.throws(()=>installNative({...options,apply:true},{usbCheck:()=>{throw Error('native_usb_preflight_failed');}}),/native_usb_preflight_failed/);
+  assert.equal(fs.existsSync(root+'/opt/clean-vpn-native'),false);
+  assert.equal(fs.existsSync(root+'/etc/systemd/system/native-daily.service'),false);
+  assert.equal(installNative(options).status,'eligible');assert.equal(installNative(options).usbPreflight.status,'required-on-target');assert.equal(fs.existsSync(root+'/opt/clean-vpn-native'),false);
+  const result=installNative({...options,apply:true});assert.equal(result.activation,'native-daily-network.service');assert.equal(result.usbPreflight.status,'required-on-target');
   const bundle=root+'/opt/clean-vpn-native/daily',manifest=JSON.parse(fs.readFileSync(bundle+'/installed.json'));
-  assert.equal(manifest.activation,result.activation);assert.equal(manifest.networkUnit,'native-daily-network.service');
+  assert.equal(manifest.usbPreflight.status,'required-on-target');assert.equal(manifest.activation,result.activation);assert.equal(manifest.networkUnit,'native-daily-network.service');
   assert.deepEqual(Object.keys(manifest.dependencies),['guard.service']);
   assert.equal(fs.readFileSync(root+'/etc/systemd/system/guard.service','utf8'),guard);
   assert.equal(fs.existsSync(root+'/etc/systemd/system/multi-user.target.wants'),false);

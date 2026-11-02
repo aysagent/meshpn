@@ -16,7 +16,7 @@ try {
     'unsafe_destination', 'symlink_destination', 'invalid_instance', 'invalid_apply', 'self_dependency', 'instance_already_present',
     'not_native_service_engine', 'native_service_absolute_safe_path_required', 'native_service_protection_dependency_required',
     'native_service_distinct_dependencies_required'];
-  const code = known.includes(error.message) ? error.message : ['ENOENT', 'EACCES', 'EEXIST', 'ENOSPC'].includes(error.code) ? error.code : 'validation_or_publication_failed';
-  console.error(JSON.stringify({ status: 'refused-or-incomplete', code, note: 'No overwrite or blind cleanup. Inspect target/units; no services were started by this installer.' }));
+  const code = error.message === 'native_usb_preflight_failed' ? error.message : known.includes(error.message) ? error.message : ['ENOENT', 'EACCES', 'EEXIST', 'ENOSPC'].includes(error.code) ? error.code : 'validation_or_publication_failed';
+  console.error(JSON.stringify({ status: 'refused-or-incomplete', code, ...(error.usbPreflight?{usbPreflight:error.usbPreflight, remedy:'Run scripts/clean-vpn-native-usb-preflight.mjs on the target; review scripts/clean-vpn-usb-boot-ready.md. No automatic gadget changes.'}:{}), note: 'No overwrite or blind cleanup. Inspect target/units; no services were started by this installer.' }));
   process.exitCode = 1;
 }

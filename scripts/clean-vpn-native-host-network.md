@@ -11,8 +11,29 @@ TUN payload, TLS и DNS обслуживает C++ engine.
 
 ## USB/DHCP на новой плате
 
-Native installer предполагает уже работающий USB Ethernet и DHCP. Он не
-создаёт gadget и не исправляет его автозапуск. Перед развёртыванием проверить
+С 2026-11-02 native installer с `--host-profile` и обычным `--root=/`
+автоматически выполняет read-only USB preflight до первой записи установки,
+как в dry-run, так и при `--apply`. Отдельный запуск:
+
+```bash
+sudo node scripts/clean-vpn-native-usb-preflight.mjs
+```
+
+Проверяются адрес/MAC/UP `usb0`, bound gadget, активный и включённый в автозагрузку
+DHCP, порядок `dnsmasq → gadget`, известный проверенный gadget script и UDP:67,
+принадлежащий именно процессу dnsmasq. При отказе установка прекращается с
+`native_usb_preflight_failed`, подробными `reasons` и указанием инструкции.
+Команды не меняют настройки, не перезапускают службы и не отправляют DHCP/DNS.
+
+Другой script hash/драйвер требует проверки; неизвестная конфигурация не
+принимается автоматически. Это фиксированный Radxa host-profile, не универсальный
+аудит Linux. Полная эффективная конфигурация dnsmasq, фактическая выдача lease,
+DNS и холодный старт этим preflight не проверяются. При `--root=/staging`
+состояние build-хоста не проверяется: в результате и installed.json записывается
+`required-on-target`, проверку на целевой плате нужно выполнить до активации.
+Exit, site-profile и установки с внешними network units не получают Radxa gate.
+
+Native installer не создаёт gadget и не исправляет его автозапуск. Проверить
 выдачу IP после загрузки, порядок DHCP/gadget и отсутствие address flush,
 конкурирующего с rescue. Для известной Radxa добавлен отдельный
 [проверяемый installer порядка загрузки](clean-vpn-usb-boot-ready.md):

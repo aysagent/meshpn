@@ -5,8 +5,11 @@ intermittent USB IP assignment after boot remains under investigation; see
 [physical DHCP/gadget ordering repair](../scripts/clean-vpn-usb-boot-ready.md).
 Final narrow fix passed a real Mac USB reboot/DHCP/DNS/TLS check. The first
 pre-bind-address candidate failed on the vendor kernel and was fully reverted.
-Next provisioning work: integrate USB readiness/ownership checks into new-board
-preflight; the fixed-profile USB installer is currently separate, not universal.
+USB preflight is now integrated into real-host `--host-profile` installation,
+before publication; staging returns `required-on-target`. Standalone read-only
+command reports refusal reasons. The fixed-profile repair remains explicit;
+unknown gadget scripts require review. Effective DHCP config and cold iPhone
+boot/lease acceptance remain separate checks. Linux installer/preflight tests pass.
 Clock bootstrap also needs bounded transient-failure handling: one early SSH
 RTT timeout currently consumes the only boot attempt. Operator authenticated
 clock correction restored this board; no automatic retry change was installed.

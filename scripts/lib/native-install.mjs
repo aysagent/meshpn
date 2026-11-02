@@ -1,6 +1,7 @@
 // Fresh native-only installation. No activation, route/firewall changes or
-// systemctl calls; activation is an explicit subsequent operation.
+// mutating systemctl calls; activation is an explicit subsequent operation.
 import fs from 'node:fs';
+import {requireNativeUsb} from './native-usb-preflight.mjs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -47,7 +48,7 @@ function exclusive(p, data, mode) {
   const fd = fs.openSync(p, 'wx', mode);
   try { fs.fchmodSync(fd, mode); fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, exitProfile, clockProfile, apply = false }, { fault = () => {} } = {}) {
+export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, exitProfile, clockProfile, apply = false }, { fault = () => {}, usbCheck = requireNativeUsb } = {}) {
   need(typeof apply === 'boolean', 'invalid_apply');
   safePath(root);
   need(/^[a-z][a-z0-9-]{0,31}$/.test(name ?? ''), 'invalid_instance');
@@ -71,6 +72,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability,node:fs.realpathSync(process.execPath)})
     : exitProfile ? nativeExitHostPlan({name,target,profile:JSON.parse(regular(exitProfile,8192,true)),engine:input,node:fs.realpathSync(process.execPath)}) : null;
   if(host){networkUnit=host.network;guardUnit=host.guard;}
+  const usbPreflight=usbCheck({root,hostProfile});
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;
   const clock = clockProfile ? JSON.parse(regular(clockProfile, 8192, true)) : null;
@@ -155,13 +157,13 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     for(const n of host.sources??nativeHostSources)files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
     for(const [n,body] of units)files.set('units/'+n,{bytes:Buffer.from(body),mode:0o644});
   }
-  const manifest = { schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
+  const manifest = { ...(usbPreflight?{usbPreflight}:{}), schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,
     transport: combo ? 'combo-tls' : transparent ? 'transparent-tls' : 'boring-tls',
     mutableDirectories: replay ? [{ name: 'replay', mode: 0o700, purpose: 'durable-replay-no-automatic-reset' }] : clock ? [{name:'clock-state',mode:0o700,purpose:'clock-budget-and-floor-no-reset'}] : [],
     ...(clock ? {clockUnit} : {}),
     networkUnit, guardUnit, dependencies, activation: site?.activation ?? host?.activation ?? unitName,
     units: [...units.keys()], files: [...files].map(([name, f]) => ({ name, mode: f.mode, sha256: hash(f.bytes) })) };
-  if (!apply) return { status: 'eligible', unit: unitName, target, fileCount: files.size, activation: 'not-requested' };
+  if (!apply) return { ...(usbPreflight?{usbPreflight}:{}), status: 'eligible', unit: unitName, target, fileCount: files.size, activation: 'not-requested' };
   directory(at('/opt/clean-vpn-native'), true, root);
   fs.mkdirSync(bundle, { mode: 0o700 }); // exclusive ownership; incomplete bundles are retained, never adopted
   syncDirectory(path.dirname(bundle));
@@ -205,7 +207,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   }
   fault('published');
   exclusive(bundle + '/installed.json', JSON.stringify(manifest) + '\n', 0o600); syncDirectory(bundle);
-  return { status: 'installed-disabled', unit: unitName, target,
+  return { ...(usbPreflight?{usbPreflight}:{}), status: 'installed-disabled', unit: unitName, target,
     activation: site?.activation ?? host?.activation ?? unitName,
     next: 'Review external network dependencies before explicit daemon-reload and enable/start of activation unit.' };
 }
