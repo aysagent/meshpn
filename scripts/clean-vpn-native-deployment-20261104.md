@@ -210,3 +210,47 @@ prepare-minimal*.sh. UFS размонтирована; физическая пр
 
 Строка `axp8191-bldo2: disabling` наблюдается также в рабочей SD-системе и сама
 по себе не доказывает отключение платы; настройки регуляторов не изменялись.
+
+### UFS rescue v2: доступ восстановлен, обычный cold boot ещё не принят
+
+Физическая загрузка v2 прошла: root `/dev/sda1`, тот же UUID UFS, boot ID
+`01e40486-07a6-41cd-b7cc-adcfd7eecdfb`. Сначала SSH восстановлен по USB IPv6LL
+с проверкой исходного host key, затем заработал IPv4 `192.168.8.1:22`.
+DHCP выдал Mac адрес `192.168.8.31`; настройки сети Mac не изменялись.
+
+В минимальном режиме networkd ждал persistent lease storage, служба которого
+не входила в rescue target. Только в генерируемой recovery-конфигурации
+`/run/systemd/network/00-clean-vpn-ufs-rescue.network` добавлено
+`[DHCPServer] PersistLeases=no`. DHCP слушает UDP 67; router/DNS не объявляет.
+Это исправление recovery DHCP, а не установленная причина исходного отказа.
+
+В этой загрузке последовательно запущены journald, modules-load, sysinit,
+basic, D-Bus, logind, fan, Avahi, wpa_supplicant, Bluetooth и multi-user.
+USB остаётся configured, роль usb_device, SSH доступен более 12 минут.
+Штатные gadget/firewall исключены runtime ConditionPathExists без sentinel;
+штатные networkd/socket/sshd runtime masked, чтобы не столкнуться с rescue
+экземплярами. Следовательно, это не проверка исходного полного boot-графа.
+
+При запуске multi-user обнаружен конфликт штатного getty@tty1 и rescue getty:
+они перезапускали друг друга. Добавлен отдельный recovery drop-in
+`/etc/systemd/system/getty@tty1.service.d/99-clean-vpn-ufs-rescue.conf` с
+`ConditionKernelCommandLine=!systemd.unit=clean-vpn-ufs-rescue.target`.
+Штатный getty пропускается только в rescue boot; rescue getty после исправления
+сохраняет PID и счётчик рестартов. Failed units и ожидающих jobs больше нет.
+При удалении rescue режима удалить также этот drop-in и console service.
+
+На UFS сохранены `stages.log`, `live-kernel.log`, `staged-boot.log`,
+`recovered-state.txt` и минимальные logs в указанном recovery directory.
+Часы платы не использованы как источник достоверного времени события;
+для сопоставления использовать boot ID и monotonic timestamps.
+
+**Текущее состояние:** временный rescue target всё ещё указан в boot env;
+VPN/kill switch/админка masked. Настройки и ключи сохранены. Обычная загрузка,
+автозапуск VPN и доступ в интернет после восстановления НЕ проверены.
+Новых reboot/poweroff после успешного rescue не выдавалось.
+
+Следующий шаг — изолировать различия обычного USB startup и рабочего rescue:
+vendor helper выбирает device role до bind и включает mass storage, rescue
+выбирает роль после bind и использует только NCM. Причинность не доказана.
+Не запускать оба gadget одновременно и не восстанавливать все units одним
+действием. Рабочий SSH/IPv6 и console сохранить до проверки обычного cold boot.
