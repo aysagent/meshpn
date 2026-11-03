@@ -13,7 +13,7 @@ test('host installer bundles standalone owner, publishes disabled network activa
   put('/ca','fixture');put('/psk',Buffer.alloc(32,1));
   put('/config',JSON.stringify({version:1,role:'client',address:'154.62.226.216',port:443,tun:'tun0',dns:true,ca:root+'/ca',secret_path:root+'/psk'}));
   put('/host',JSON.stringify({version:1,guard_unit:'guard.service',guard_script:'/usr/local/bin/guard.sh'}));
-  const options={root,name:'daily',binary:root+'/engine',config:root+'/config',hostProfile:root+'/host'};
+  const options={root,name:'daily',binary:root+'/engine',tunHelper:root+'/engine',config:root+'/config',hostProfile:root+'/host'};
   assert.throws(()=>installNative({...options,networkUnit:'other.service'}),/conflicting_host_dependencies/);
   assert.throws(()=>installNative({...options,apply:true},{usbCheck:()=>{throw Error('native_usb_preflight_failed');}}),/native_usb_preflight_failed/);
   assert.equal(fs.existsSync(root+'/opt/clean-vpn-native'),false);
@@ -33,7 +33,7 @@ test('host installer bundles standalone owner, publishes disabled network activa
     const source=fs.readFileSync(bundle+'/'+f.name,'utf8');
     for(const m of source.matchAll(/from ['"](\.[^'"]+)['"]/g))assert.ok(fs.existsSync(path.resolve(path.dirname(bundle+'/'+f.name),m[1])),`${f.name}: ${m[1]}`);
   }
-  assert.ok(fs.existsSync(control+'/clean-vpn-native-tun.py'));
+  assert.ok(fs.existsSync(bundle+'/tun-helper'));assert.equal(fs.existsSync(control+'/clean-vpn-native-tun.py'),false);
   assert.throws(()=>installNative({...options,apply:true}),/instance_already_present/);
   const alternate=JSON.parse(fs.readFileSync(root+'/config'));alternate.peer_ipv4='10.99.0.37';put('/config',JSON.stringify(alternate));
   installNative({...options,name:'second',apply:true});

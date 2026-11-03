@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {validateNativeExitHost} from './native-exit-host-network.mjs';
-export const nativeExitHostSources=['clean-vpn-native-exit-host.mjs','clean-vpn-native-tun.py','lib/native-exit-host-network.mjs','lib/native-host-store.mjs'];
+export const nativeExitHostSources=['clean-vpn-native-exit-host.mjs','lib/native-exit-host-network.mjs','lib/native-host-store.mjs'];
 export function nativeExitHostPlan({name,target,profile,engine,node='/usr/bin/node'}){
   assert.deepEqual(Object.keys(profile).sort(),['uplink','version']);assert.equal(profile.version,1);
   assert.equal(engine.role,'exit');

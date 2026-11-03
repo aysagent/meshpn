@@ -2,6 +2,13 @@
 
 ## clean-vpn: эксплуатация, транспорты и быстрый старт
 
+**Новая пара: [короткая установка native exit/client](scripts/clean-vpn-native-new-pair.md).**
+`bash install.sh --role=exit --endpoint=VPS_IPV4` создаёт сертификат и ключи,
+настраивает forwarding и автозапуск. На плате:
+`bash install.sh --role=client --bundle=/root/client.bundle.json --admin-ui`.
+Админка ставится этой же командой; удаление — `bash uninstall.sh --role=client|exit`.
+Python и ручное редактирование unit/config для этого пути не требуются.
+
 **На личной паре Radxa↔VPS включён native C++ `combo-tls` с автозапуском.**
 [Исправление управления Radxa 31 октября](scripts/clean-vpn-native-admin-repair-20261031.md):
 сохранение, stop/start и отключение kill switch проверены через настоящий broker;

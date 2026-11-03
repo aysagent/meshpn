@@ -21,7 +21,7 @@ try{
   const prop=(u,k)=>run('systemctl',['show',u,'-p',k,'--value']);
   if(action==='run')assert.equal(prop(config.network_unit,'MainPID'),String(process.pid),'native_named_owner_required');
   const owner=nativeExitHostNetwork(config,{run,store,scope:nativeHostScope,randomId:()=>randomBytes(12).toString('hex'),
-    createTun:(name,alias)=>run('python3',[fileURLToPath(new URL('./clean-vpn-native-tun.py',import.meta.url)),name,alias])});
+    createTun:(name,alias)=>{const helper=fileURLToPath(new URL('../tun-helper',import.meta.url));return run(helper,[name,alias]);}});
   if(action==='preflight'){owner.preflight();console.log(JSON.stringify({status:'eligible',networkChanged:false,profile:'existing-exit-ipv4'}));}
   else if(action==='recover'){
     const end=performance.now()+20000;

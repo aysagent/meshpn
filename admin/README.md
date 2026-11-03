@@ -1,5 +1,16 @@
 # MeshPN: админка Radxa через USB
 
+Для новой платы админку устанавливает основной
+[install.sh](../scripts/clean-vpn-native-new-pair.md):
+`bash install.sh --role=client --bundle=/root/client.bundle.json --admin-ui`.
+Он включает её в systemd; отдельная установка админки не нужна.
+`bash uninstall.sh --role=client` снимает и VPN, и службы админки,
+сохраняя настройки для повторной установки.
+Низкоуровневые команды ниже оставлены для обслуживания существующих установок.
+Перед отдельным `admin/install.mjs --apply/--update` собрать helper командой
+`bash scripts/build-clean-vpn-host-helpers.sh --admin-ui`
+(нужны `pkg-config libavahi-client-dev`). Публикация mDNS больше не требует Python.
+
 31 октября админка [привязана к постоянному native combo-tls](../scripts/clean-vpn-native-combo-daily-20261031.md).
 Проверены autostart после reboot Radxa, профиль/observer обеих веток,
 реальный USB HTTPS/DNS и SIGKILL recovery. Пароль и Wi-Fi сохранены.

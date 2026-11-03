@@ -19,7 +19,7 @@ export async function checkInstalledTrial({run,probe,scratch,engine}) {
   need(!fs.existsSync(state),'unexpected_clock_floor');
   // Real trust anchor is verified separately using the copied pin/key; this is
   // a read-only explicit probe, not an automatic boot query or clock change.
-  const clock=JSON.parse(await run('/usr/bin/python3',['-I',bundle+'/clock.py','probe','--config='+bundle+'/clock.json'],15000));
+  const clock=JSON.parse(await run(bundle+'/clock-node',['--jitless',bundle+'/clock.mjs','probe','--config='+bundle+'/clock.json'],15000));
   need(clock.status==='passed'&&clock.systemClockChanged===false&&!clock.needsCorrection,'clock_probe_failed');checks.push('pinned-clock-probe');
   try {
     fs.writeFileSync(next,Buffer.concat([fs.readFileSync(engine),Buffer.from('\ninstalled-lifecycle-fixture\n')]),{mode:0o755,flag:'wx'});

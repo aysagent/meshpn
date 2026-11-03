@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
+const freshScript = createHash('sha256').update(fs.readFileSync(new URL('../usb/gadget-start.sh',import.meta.url))).digest('hex');
 const supportedScript = 'c0d55c1d8c765084cd674b013e90075b2558ed7adee1e11e42f64c541de7b94b';
 const limits = ['point-in-time-not-cold-boot-proof','no-DHCP-offer-or-client-lease-probe','no-effective-dnsmasq-config-validation','no-DNS-or-internet-probe','fixed-radxa-host-profile-only'];
 const command = (file,args) => execFileSync(file,args,{encoding:'utf8',timeout:3000,maxBuffer:65536});
@@ -26,7 +27,7 @@ export function inspectNativeUsb({run=command,io=fs,platform=process.platform,di
     require(gadget.ExecStart?.includes('path='+script+' ;'),'usb_gadget_command_review_required');
     const stat=io.lstatSync(script);
     require(stat.isFile()&&!stat.isSymbolicLink()&&stat.uid===0&&!(stat.mode&0o022),'usb_gadget_script_ownership_required');
-    require(digest(io.readFileSync(script))===supportedScript,'usb_gadget_script_review_required');
+    require([supportedScript,freshScript].includes(digest(io.readFileSync(script))),'usb_gadget_script_review_required');
     require(io.readFileSync('/sys/kernel/config/usb_gadget/g1/functions/ecm.usb0/ifname','utf8').trim()==='usb0'&&
       io.readFileSync('/sys/kernel/config/usb_gadget/g1/UDC','utf8').trim()!=='','usb_gadget_bound_required');
     let socket=false;

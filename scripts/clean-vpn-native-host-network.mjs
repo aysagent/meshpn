@@ -26,7 +26,7 @@ try{
   if(action==='run')assert.equal(prop(config.network_unit,'MainPID'),String(process.pid),'native_named_owner_required');
   host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();redirect=openNativeComboRedirectJournal();
   const owner=nativeHostNetwork(config,{run,host,dns,redirect,store,scope:nativeHostScope,randomId:()=>randomBytes(12).toString('hex'),
-    createTun:(name,alias,peer)=>run('python3',[fileURLToPath(new URL('./clean-vpn-native-tun.py',import.meta.url)),name,alias,peer])});
+    createTun:(name,alias,peer)=>{const helper=fileURLToPath(new URL('../tun-helper',import.meta.url));return run(helper,[name,alias,peer]);}});
   if(action==='preflight'){owner.preflight();console.log(JSON.stringify({status:'eligible',networkChanged:false,profile:'radxa-ipv4'}));}
   else if(action==='recover'){
     // BindsTo/After stop the engine before this ExecStopPost. Wait only for

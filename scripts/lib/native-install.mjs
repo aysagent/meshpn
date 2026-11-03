@@ -48,7 +48,7 @@ function exclusive(p, data, mode) {
   const fd = fs.openSync(p, 'wx', mode);
   try { fs.fchmodSync(fd, mode); fs.writeFileSync(fd, data); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
-export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, exitProfile, clockProfile, apply = false }, { fault = () => {}, usbCheck = requireNativeUsb } = {}) {
+export function installNative({ root = '/', name, binary, config, networkUnit, guardUnit, siteProfile, hostProfile, exitProfile, clockProfile, tunHelper, apply = false }, { fault = () => {}, usbCheck = requireNativeUsb } = {}) {
   need(typeof apply === 'boolean', 'invalid_apply');
   safePath(root);
   need(/^[a-z][a-z0-9-]{0,31}$/.test(name ?? ''), 'invalid_instance');
@@ -90,7 +90,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     units.set(unitName,units.get(unitName).replace('\n[Install]\nWantedBy=multi-user.target\n','\n'));
     for(const [n,b] of host.units)units.set(n,b);
   }
-  if (clock) units.set(clockUnit, nativeClockRecoveryUnit({consumerUnit:unitName,script:target+'/clock.py',config:target+'/clock.json',stateDirectory:target+'/clock-state'}));
+  if (clock) units.set(clockUnit, nativeClockRecoveryUnit({consumerUnit:unitName,script:target+'/clock.mjs',node:target+'/clock-node',config:target+'/clock.json',stateDirectory:target+'/clock-state'}));
   const unit = units.get(unitName);
   const at = p => path.join(root, p);
   const unitPath = at('/etc/systemd/system/' + unitName), bundle = at(target);
@@ -142,7 +142,8 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     need(pin.length === 3 && pin[0] === 'clean-vpn-clock' && pin[1] === 'ssh-ed25519' && raw.length === 51 && raw.subarray(0,19).equals(Buffer.from('0000000b7373682d6564323535313900000020','hex')), 'clock_single_raw_ed25519_pin');
     const c = {...clock, identity:copy(clock.identity,'clock-identity',true),known_hosts:copy(clock.known_hosts,'clock-known-hosts',false),state_dir:target+'/clock-state',consumer_unit:unitName,update_directory:target+'/binary-updates'};
     files.set('clock.json',{bytes:Buffer.from(JSON.stringify(c)+'\n'),mode:0o600});
-    files.set('clock.py',{bytes:regular(fileURLToPath(new URL('../clean-vpn-native-clock.py',import.meta.url)),65536),mode:0o644});
+    files.set('clock-node',{bytes:regular(fs.realpathSync(process.execPath),256*1024*1024),mode:0o755});
+    files.set('clock.mjs',{bytes:regular(fileURLToPath(new URL('../clean-vpn-native-clock.mjs',import.meta.url)),65536),mode:0o644});
     files.set('clock.unit',{bytes:Buffer.from(units.get(clockUnit)),mode:0o644});
   }
   files.set('config.json', { bytes: Buffer.from(JSON.stringify(rewritten) + '\n'), mode: 0o600 });
@@ -153,8 +154,9 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
     for (const [name, body] of units) files.set('units/' + name, { bytes: Buffer.from(body), mode: 0o644 });
   }
   if(host){
+    files.set('tun-helper',{bytes:regular(tunHelper??fileURLToPath(new URL('../../native/clean_vpn/build/clean-vpn-tun-helper',import.meta.url)),4*1024*1024),mode:0o755});
     for(const [n,body] of host.files)files.set(n,{bytes:Buffer.from(body),mode:0o600});
-    for(const n of host.sources??nativeHostSources)files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
+    for(const n of (host.sources??nativeHostSources).filter(n=>!n.endsWith('.py')))files.set('control/'+n,{bytes:regular(fileURLToPath(new URL('../'+n,import.meta.url)),128*1024),mode:0o644});
     for(const [n,body] of units)files.set('units/'+n,{bytes:Buffer.from(body),mode:0o644});
   }
   const manifest = { ...(usbPreflight?{usbPreflight}:{}), schema: 1, kind: 'clean-vpn-native-install', name, role: input.role, unit: unitName,

@@ -1,5 +1,11 @@
 # Native clock recovery: только после отказа по времени
 
+С 3 ноября новый [install.sh](clean-vpn-native-new-pair.md) автоматически
+подготавливает SSH provider, ключи и lifecycle. Новый helper —
+`clean-vpn-native-clock.mjs` (Node.js без Python); TUN и mDNS также переведены
+на C/C++. Нижеследующие подробности — устройство протокола и история проверок,
+а не дополнительные ручные действия для установки.
+
 Продолжение 2026-10-28: [установочный bundle, блокировка с updater и физический pilot](clean-vpn-native-installed-lifecycle.md).
 Постоянная интеграция позднее включена и проверена на реальном отставании часов:
 [физическая приёмка 29 октября](clean-vpn-native-daily-20261029.md).
@@ -97,7 +103,7 @@ SSH доказывает, что время пришло от закреплён
 клиента и root-owned helper. В `authorized_keys` обязательны **оба** ограничения:
 
 ```text
-restrict,command="/usr/bin/timeout 5s /usr/bin/python3 -I /opt/clean-vpn-clock/clean-vpn-native-clock.py serve" ssh-ed25519 PUBLIC_KEY
+restrict,command="/usr/bin/timeout 5s /usr/bin/node --jitless /opt/clean-vpn-clock/clean-vpn-native-clock.mjs serve" ssh-ed25519 PUBLIC_KEY
 ```
 
 Это пример для будущего установщика, не команда установки. Пользователь не
@@ -132,9 +138,9 @@ restrict,command="/usr/bin/timeout 5s /usr/bin/python3 -I /opt/clean-vpn-clock/c
 API helper:
 
 ```sh
-python3 -I scripts/clean-vpn-native-clock.py probe --config=/etc/clean-vpn-clock/config.json
+node --jitless scripts/clean-vpn-native-clock.mjs probe --config=/etc/clean-vpn-clock/config.json
 # Только после отказа своего engine и завершённого stop consumer:
-python3 -I scripts/clean-vpn-native-clock.py apply --config=/etc/clean-vpn-clock/config.json --failure=auth_clock_skew
+node --jitless scripts/clean-vpn-native-clock.mjs apply --config=/etc/clean-vpn-clock/config.json --failure=auth_clock_skew
 ```
 
 `--failure` — assertion доверенного root lifecycle, не самостоятельное
@@ -176,7 +182,7 @@ node scripts/clean-vpn-native-clock-unit.mjs --kind=consumer \
   --recovery-unit=clean-vpn-clock.service
 
 node scripts/clean-vpn-native-clock-unit.mjs --kind=recovery \
-  --consumer-unit=clean-vpn.service --script=/opt/clean-vpn-clock/clean-vpn-native-clock.py \
+  --consumer-unit=clean-vpn.service --script=/opt/clean-vpn-clock/clean-vpn-native-clock.mjs \
   --config=/etc/clean-vpn-clock/config.json --state-directory=/var/lib/clean-vpn-clock
 ```
 
@@ -187,9 +193,11 @@ node scripts/clean-vpn-native-clock-unit.mjs --kind=recovery \
 
 ## Проверки
 
-- `python3 -B scripts/test-native-clock.py`: policy, формат/права/nonce,
+- Исторический `test-native-clock.py` проверял старую реализацию: policy, формат/права/nonce,
   ограничение попыток, отказ при изменившемся InvocationID, pending restart,
   просроченный сертификат при правильном времени, параллельная смена часов.
+- Новый helper: `node --test scripts/test-native-clock-node.mjs`; настоящий
+  SSH probe и systemd sandbox проверяются в disposable setup-лаборатории.
 - `node --test scripts/test-native-clock-unit.mjs scripts/test-native-service-unit.mjs`:
   opt-in, конкретные exit codes, раздельные права, injection rejection.
 - `CVPN_BUILD=... node --test scripts/test-native-clock-auth.mjs`:

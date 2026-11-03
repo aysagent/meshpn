@@ -25,7 +25,7 @@ done
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 for cv_tool in cmake git patch c++ node flock; do
   if ! command -v "$cv_tool" >/dev/null; then
-    echo "Missing $cv_tool. Install prerequisites: apt-get install build-essential cmake git patch pkg-config perl python3" >&2
+    echo "Missing $cv_tool. Install prerequisites: apt-get install build-essential cmake git patch pkg-config perl" >&2
     exit 1
   fi
 done
@@ -52,6 +52,7 @@ if (
     "-DCVPN_JSON_SOURCE=$PWD/native/clean_vpn/build-deps-helper/_deps/json-src" &&
   cmake --build native/clean_vpn/build --target clean-vpn-engine protocol-test dns-wire-test service-notify-test transparent-test transparent-socket-test transparent-fault-test transparent-quota-test transparent-replay-test combo-test throughput-test tls-profile-test certificate-compression-test http2-alps-test http1-test --parallel "$cv_jobs" &&
   ctest --test-dir native/clean_vpn/build --output-on-failure &&
+  bash scripts/build-clean-vpn-host-helpers.sh &&
   native/clean_vpn/build/clean-vpn-engine --capabilities
 ) >"$cv_log" 2>&1; then
   echo 'NATIVE_BUILD=passed (services unchanged)'

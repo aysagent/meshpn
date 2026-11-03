@@ -8,8 +8,8 @@ export function clockPath(value){
   if(typeof value!=='string'||!/^\/[a-zA-Z0-9_./-]+$/.test(value)||path.normalize(value)!==value||value==='/')throw Error('clock_absolute_path');
   return value;
 }
-export function nativeClockRecoveryUnit({consumerUnit,script,config,stateDirectory,namespace}){
-  clockUnitName(consumerUnit);[script,config,stateDirectory].forEach(clockPath);
+export function nativeClockRecoveryUnit({consumerUnit,script,config,stateDirectory,namespace,node='/usr/bin/node'}){
+  clockUnitName(consumerUnit);[script,config,stateDirectory,node].forEach(clockPath);
   if(namespace!==undefined&&!/^[a-z][a-z0-9_-]{0,40}$/.test(namespace))throw Error('clock_namespace');
   return `[Unit]
 Description=Conditional clean-vpn clock recovery
@@ -17,7 +17,7 @@ Before=${consumerUnit}
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -I ${script} recover --config=${config}
+ExecStart=${script.endsWith('.mjs')?node+' --jitless --disallow-code-generation-from-strings':'/usr/bin/python3 -I'} ${script} recover --config=${config}
 ${namespace?`NetworkNamespacePath=/run/netns/${namespace}\n`:''}TimeoutStartSec=30
 Restart=no
 UMask=0077

@@ -41,7 +41,7 @@ const open=()=>{
   store=openNativeHostStore();host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();redirect=openNativeComboRedirectJournal(undefined,{checkpoint:(step)=>{if(redirectCrash&&step==='applied')throw Error('redirect_cut');}});
   const write=store.write;store.write=s=>{write(s);if(crashAt&&crashAt(s))throw Error('simulated_process_boundary');};
   owner=nativeHostNetwork(c,{run,host,dns,redirect,store,scope:nativeHostScope,randomId:()=>crypto.randomUUID().replaceAll('-','').slice(0,24),
-    createTun:(name,alias,peer)=>cmd('python3',[root+'scripts/clean-vpn-native-tun.py',name,alias,peer])});
+    createTun:(name,alias,peer)=>cmd(root+'native/clean_vpn/build/clean-vpn-tun-helper',[name,alias,peer])});
 };
 const close=()=>{redirect?.release();dns?.release();host?.release();store?.close();};
 const baseline=()=>{

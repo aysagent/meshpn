@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {validateNativeComboRedirectConfig} from './native-combo-redirect-plan.mjs';
 import {nativeHostUnit} from './native-host-unit.mjs';
 import {validateNativeHostConfig} from './native-host-network.mjs';
-export const nativeHostSources=['clean-vpn-native-host-network.mjs','clean-vpn-native-tun.py',
+export const nativeHostSources=['clean-vpn-native-host-network.mjs',
   'lib/native-host-network.mjs','lib/native-host-store.mjs','lib/vpn-host-routes.mjs',
   'lib/dns-tunnel-journal.mjs','lib/dns-tunnel-plan.mjs','lib/dns-tunnel-command.mjs','lib/dns-tunnel-conntrack.mjs',
   'lib/dns-tunnel-forwarder.mjs','lib/dns-tunnel-stub.mjs','lib/lab-dns-wire.mjs',

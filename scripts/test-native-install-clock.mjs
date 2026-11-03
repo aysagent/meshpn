@@ -15,7 +15,7 @@ test('fresh clock install relocates private inputs, keeps mutable state separate
   put(root+'/pin','clean-vpn-clock ssh-ed25519 '+pin+'\n');
   put(root+'/clock.json',JSON.stringify({version:1,host:'192.0.2.1',port:22,user:'cvpn-clock',identity:root+'/identity',known_hosts:root+'/pin'}));
   put(root+'/client.json',JSON.stringify({version:1,role:'client',address:'192.0.2.1',ca:root+'/ca',secret_path:root+'/psk'}));
-  return {root,name,binary:root+'/engine',config:root+'/client.json',clockProfile:root+'/clock.json',networkUnit:'net.service',guardUnit:'guard.service'};};
+  return {root,name,binary:root+'/engine',tunHelper:root+'/engine',config:root+'/client.json',clockProfile:root+'/clock.json',networkUnit:'net.service',guardUnit:'guard.service'};};
  const combo=make('combo'),packet={...JSON.parse(fs.readFileSync(combo.config)),port:443,tun:'tun0',dns:true};delete combo.networkUnit;delete combo.guardUnit;combo.hostProfile=combo.root+'/host.json';put(combo.root+'/relay.psk',Buffer.alloc(32,2));
  put(combo.root+'/host.json',JSON.stringify({version:1,guard_unit:'guard.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'}));
  put(combo.config,JSON.stringify({version:1,role:'client',transport:'combo-tls',boring:packet,transparent:{version:1,role:'client',transport:'transparent-tls',secret_path:combo.root+'/relay.psk',listen:{ipv4:'0.0.0.0',port:14443},exit:{ipv4:packet.address,port:packet.port},destination_policy:{mode:'public-https',deny_ipv4:[]}}}));

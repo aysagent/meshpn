@@ -24,7 +24,7 @@ function open(){
   owner=nativeExitHostNetwork(config,{scope:nativeHostScope,randomId:()=>randomBytes(12).toString('hex'),
     store:{read:()=>store.read(),write:s=>{store.write(s);if(crashAt?.(s))throw Error('simulated_crash');}},
     run:(f,a)=>f==='systemctl'?(a[3]==='MainPID'?(active?'123':'0'):a[3]==='ActiveState'?(active?'active':'inactive'):config.network_unit):cmd(f,a),
-    createTun:(name,alias)=>{cmd('python3',[fileURLToPath(new URL('./clean-vpn-native-tun.py',import.meta.url)),name,alias]);if(afterTun)throw Error('simulated_crash');}});
+    createTun:(name,alias)=>{cmd(fileURLToPath(new URL('../native/clean_vpn/build/clean-vpn-tun-helper',import.meta.url)),[name,alias]);if(afterTun)throw Error('simulated_crash');}});
 }
 const baseline=()=>assert.deepEqual(snapshot(),before);
 try{
