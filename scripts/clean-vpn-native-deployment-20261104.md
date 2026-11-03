@@ -254,3 +254,32 @@ vendor helper выбирает device role до bind и включает mass st
 выбирает роль после bind и использует только NCM. Причинность не доказана.
 Не запускать оба gadget одновременно и не восстанавливать все units одним
 действием. Рабочий SSH/IPv6 и console сохранить до проверки обычного cold boot.
+
+### Следующая попытка обычной загрузки: снова нет доступа
+
+В живом rescue boot успешно переданы обязанности штатным networkd и sshd.
+Обе передачи имели отдельный 60-секундный rollback timer; после подтверждения
+таймеры отменены. Новый независимый SSH по `192.168.8.1` с исходным host key
+прошёл, штатный networkd слушал DHCP 67. Runtime networkd/SSH masks сняты.
+
+Для следующей загрузки подготовлен обратимый
+`armbian-usb-gadget.service.d/99-clean-vpn-ufs-recovery.conf`: вместо старого
+helper запускается проверенный `/usr/local/libexec/clean-vpn-ufs-rescue-usb`,
+добавлены Requires/After udevd, сброшен ExecStop, отдельный ordinary-usb.log.
+Vendor firewall сохранён в recovery directory и masked. Все project units
+по-прежнему masked. `bash -n`, `sshd -t`, `systemd-analyze verify` для gadget,
+networkd, ssh и graphical.target завершились успешно.
+
+Рабочий rescue boot env сохранён как
+`/root/cvpn-ufs-recovery-20261104/armbianEnv.working-rescue.txt`; перед reboot
+восстановлен исходный env без systemd.unit. После `sync; systemctl reboot`
+USB не появился, SSH по USB IPv4/IPv6 и прежнему uplink недоступен.
+Пользователь подтвердил погасший экран. Новый boot ID и журнал ещё не получены.
+**Это не успешная обычная загрузка.** Одной замены gadget helper недостаточно;
+конкретная причина отказа всё ещё неизвестна. Не повторять reboot вслепую.
+
+Запрошена загрузка SD. Следующий шаг: проверить модель/root/UUID, сохранить
+журнал этой попытки, восстановить `armbianEnv.working-rescue.txt`, убрать только
+новый vendor gadget recovery drop-in (сохранив его копию). Vendor firewall и
+project units оставить masked. Вернуться к доказанно рабочему rescue boot;
+новые boot-изменения делать только на основании полученных данных.

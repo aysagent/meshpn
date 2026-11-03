@@ -32,7 +32,10 @@
       "console": "stable after excluding ordinary tty1 getty in rescue boot",
       "failedUnitsAfterConsoleFix": 0,
       "vpnAndAdmin": "masked, not restored",
-      "ordinaryColdBoot": "not verified; original failure cause unknown"
+      "ordinaryColdBoot": "subsequent normal-target reboot failed: USB absent, screen dark; cause unknown",
+      "stockNetworkdHandoff": "passed with rollback timer",
+      "stockSshHandoff": "passed with independent IPv4 SSH and original host key",
+      "normalTargetWithRescueUsb": "failed after clean systemd verification; awaiting SD journal and restore of working rescue boot"
     }
   },
   "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]
