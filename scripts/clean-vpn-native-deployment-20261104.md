@@ -152,3 +152,39 @@ UFS сначала смонтирована ro,noload. Журналы после
 проверить SSH **192.168.8.1**. Админка на этом этапе отключена намеренно.
 Не восстанавливать все службы сразу и не объявлять первопричину установленной
 до чтения нового boot-журнала. Временные настройки логирования затем вернуть.
+
+### Повторная попытка после частичного отката
+
+Пользователь сообщил о повторном отключении. Снова загрузил SD; после штатного
+replay pending EXT4 journal найден актуальный boot
+`2c3c17ae70bf43c59a9b7c678dee407b`. Первый ro,noload показал старую запись
+`cc5180d97553455198bbe98ab217c064`; её нельзя принимать за результат отката.
+Актуальная запись подтверждает отсутствие запуска guard и новое отключённое
+RAM logging, но обрывается вскоре после journal flush. Причина остаётся неизвестной.
+
+Проверена точная история команд: между доступной загрузкой `b41abacd...` и
+неудачной перезагрузкой — stop vendor firewall, restart native network owner,
+git pull/install с двумя новыми ordering drop-ins, verify и `sync; systemctl reboot`.
+В этот интервал ядро/DTB/загрузчик не изменялись. Hash ядра, DTB, fan overlay,
+systemd и journald на UFS совпали с рабочей SD. Полный offline verify default.target
+и journal verify не выявили ошибки, объясняющей отключение.
+
+Подготовлен отдельный **временный диагностический** boot, ещё НЕ проверенный:
+
+- В extraargs UFS добавлены `systemd.unit=clean-vpn-ufs-rescue.target panic=0`.
+- Исходный boot env сохранён в
+  `/root/cvpn-ufs-recovery-20261104/armbianEnv.before-minimal.txt`.
+- Четыре `clean-vpn-ufs-rescue.*` unit: target, USB, network, SSH. Обычный
+  multi-user/graphical target не запрашивается, project units остаются masked.
+- Shell helper `/usr/local/libexec/clean-vpn-ufs-rescue-usb`: отдельный NCM
+  gadget, USB 192.168.8.1, DHCP без объявления router/DNS, без mass storage.
+- sshd использует исходный `/etc/ssh/sshd_config` и PAM, только ListenAddress
+  ограничен 192.168.8.1; аутентификация не ослаблена.
+- Прямые append logs `minimal-{usb,network,ssh}.log` в recovery directory;
+  конфигурация проверена `bash -n` и offline `systemd-analyze verify`.
+- UFS размонтирована, перезагрузка не выдавалась. Следующий шаг — физический
+  запуск этого режима; не обещать успешный ремонт до его проверки.
+
+Для удаления диагностического режима после получения доступа: восстановить
+сохранённый boot env и удалить только три rescue service, rescue target и
+rescue USB helper. Обычные службы не включать одновременно до выяснения причины.
