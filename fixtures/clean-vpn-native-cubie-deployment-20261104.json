@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "kind": "native-physical-deployment-acceptance",
+  "client": "Cubie A7Z / Armbian Debian 13 / usb0 192.168.8.1",
+  "exit": "84.201.14.124:443 / Alpine Docker / Ubuntu 18.04 host",
+  "previousPairChanged": false,
+  "macNetworkSettingsChanged": false,
+  "transport": "combo-tls",
+  "profile": "chromium-156-bounded-cold-v1",
+  "tests": {
+    "cubieCtest": {"passed": 14, "total": 14},
+    "hostProfileRegression": {"passed": 109, "total": 109},
+    "setupAfterBootFix": {"passed": 11, "total": 11},
+    "linuxNamespaceRecoveryWithForeignUsbAccept": {"passed": 37},
+    "usbCombo": {"example.org": 200, "internet.yandex.ru": 302, "www.speedtest.net": 200, "downloadBytes": 2097152, "uploadBytes": 1048576, "downloadStatus": 200, "uploadStatus": 200, "sourceIp": "192.168.8.31"},
+    "usbBoring": {"externalIp": "84.201.14.124", "www.speedtest.net": 200},
+    "adminTransportSwitch": ["combo-tls -> boring-tls", "boring-tls -> combo-tls"],
+    "pinnedSshClockProbe": {"status": "passed", "clockChanged": false},
+    "dns": {"usbUdp": "passed", "usbTcp": "passed", "adminSystemResolverProbe": "passed"},
+    "independentCapture": {"packetProfile": "matched", "profileDifferences": [], "packetJa4": "t13d0915h2_f91f431d341e_54d72502093d", "relayExampleJa3Preserved": true, "relayExampleJa4Preserved": true, "usbJa3": "375c6162a492dfbf2795909110ce8424", "usbJa4": "t13d4907h2_0d8feac7bc37_7395dae3b2f3", "kernelDroppedPackets": 0},
+    "firstReboot": "failed: vendor USB ACCEPT preceded guard; fixed with owned boot-order drop-ins",
+    "secondReboot": "blocked: USB device absent and SSH unreachable after reboot and user power reconnect; cause unknown",
+    "simplifiedSystemdBootModel": "four model units active after container restart; hardware and real ExecStart not covered",
+    "postRebootUsbFailClosed": "not run"
+  },
+  "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]
+}

@@ -26,7 +26,8 @@ admin broker и обновлением бинарника. Установка о
 - Установщик 4421f91 поддерживает прежний фиксированный профиль .7/wlan0/dnsmasq.
   Его нельзя без адаптации запускать на новой плате; сохранять .8 USB rescue.
 
-Статус: обследование и подготовка. Этот документ не подтверждает развёртывание.
+Статус: exit работает; приёмка клиента заблокирована отсутствием доступа после
+второй перезагрузки. Развёртывание пары НЕ завершено.
 
 Подготовлены opt-in параметры client install: `--usb-backend=networkd
 --usb-address=192.168.8.1 --uplink=auto`. Проверяется существующий Armbian gadget,
@@ -56,3 +57,64 @@ basic.target, иначе получается цикл через gated networkd
 удаляются uninstall; повтор install добавляет их к уже установленной Cubie.
 Произвольный ручной перезапуск чужого firewall во время VPN не входит в
 поддерживаемый lifecycle: он может переставить собственные rules.
+
+## Развёрнуто
+
+- Exit: `84.201.14.124:443`, `combo-tls`, контейнер `clean-vpn-exit`,
+  `restart=unless-stopped`; Docker включён при загрузке. Образ
+  `clean-vpn-native:4421f91` (engine не менялся в последующих control-plane
+  commits), Alpine musl, около 95 MB без build layers. Собственные network
+  `cvpn-new-exit-net` и replay volume `cvpn-new-exit-replay`. Host network не используется.
+- Сохранённый `mtproto-proxy` остановлен, restart policy временно `no`; исходная
+  policy `always` записана в `/var/lib/clean-vpn-new-exit/telegram-proxy-before.txt`.
+  Возвращать его можно только после остановки clean-vpn, иначе конфликт 443.
+- Client: `native-client-network.service` → `native-client.service`, guard
+  `clean-vpn-killswitch.service`; включён combo, peer `10.99.0.2`.
+- USB-админка: **http://mpn-cubie.local/** или **http://192.168.8.1/**.
+  `mpn.local` остаётся старой Radxa. Начальный пароль `admin`; изменения через
+  web требуют сначала сменить этот пароль. Web — отдельный `meshpn-admin` UID.
+- CA/cert: `personal-cert.internal`, отдельные packet/relay ключи на каждого
+  из трёх клиентов. Исходные комплекты на VPS:
+  `/var/lib/clean-vpn-new-exit/exports/client-{1,2,3}.bundle.json`.
+  Cubie получила только client-1, файл `/root/clean-vpn-client-1.bundle.json`.
+- Штатные networkd DHCP и resolved DNS сохранены. Установлены зависимости и
+  Node 24.13.0 в `/opt/clean-vpn-node`, без Python. В исходном образе `/usr` и
+  `/opt` имели root:root 0775; убрана групповая запись до 0755. Исходные режимы
+  записаны в `/root/clean-vpn-downloads/{usr,opt}-mode-before.txt`.
+- Временный build swap VPS выключен и удалён. Пробный loopback listener 8443
+  и временный lab-контейнер удалены. На VPS сохранён owned modules-load файл
+  для `ip6table_filter`: иначе старое ядро не даёт контейнеру поставить IPv6 guard.
+
+## Приёмка
+
+Санитизированные результаты: `fixtures/clean-vpn-native-cubie-deployment-20261104.json`.
+CTest на Cubie 14/14, профильные regression 109/109, installer 11/11,
+37 kernel/journal проверок с foreign USB ACCEPT. Реальные USB HTTP(S), UDP/TCP
+DNS, 2 MiB download, 1 MiB upload, переключение combo/boring/combo прошли.
+В boring внешний IP подтверждён как новый exit. Независимые USB/WAN pcap
+сохранены на Cubie в root-only `/root/clean-vpn-downloads/acceptance/`;
+profile matched, relay JA3/JA4 сохранены, kernel capture drops = 0.
+Clock probe с pinned SSH прошёл без изменения времени; используется только
+после распознанного time-related отказа native, а не при каждом включении.
+
+Это ограниченная приёмка curl с ноутбука, не новая iPhone/Speedtest-browser
+или длительная soak-проверка. Сеть Mac и прежняя рабочая пара не изменялись.
+
+## Блокировка повторной загрузки
+
+После установки boot-order drop-ins (`f6a7d54`) проверка systemd-analyze verify
+на плате прошла, но после `reboot` плата не вернулась: USB-устройство исчезло,
+SSH недоступен по 192.168.8.1 и прежнему uplink 172.20.10.3. Пользователь
+переподключил питание/USB: сначала мигал индикатор и работал вентилятор,
+затем мигание и вентилятор остановились; SSH и админка недоступны.
+Причина не установлена: журнала этой загрузки нет. Нельзя считать это
+доказанным аппаратным отказом или успешной проверкой cold boot.
+
+Упрощённая модель зависимостей gadget/firewall/guard/networkd в отдельном
+systemd-контейнере после restart запустила все четыре службы без зависших
+jobs. Она использует заглушки ExecStart и не проверяет аппаратный gadget,
+фактические firewall-скрипты или полный граф служб Armbian.
+Следующий шаг — локальная консоль либо доступ к системному накопителю,
+чтение журнала и проверка/откат последних owned drop-ins. Отрицательная
+проверка USB kill switch после reboot пока НЕ выполнена.
+Новый exit отдельно проверен: healthy на TCP 443; Telegram proxy остановлен.

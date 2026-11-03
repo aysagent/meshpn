@@ -90,7 +90,7 @@ export class NativeSetup {
   fs.mkdirSync(this.base,{recursive:true,mode:0o700});parents(this.manifest);
   if(exists(this.manifest)){
    this.state=JSON.parse(safeRead(this.manifest));need(JSON.stringify(this.state.identity)===JSON.stringify(identity),'existing_install_options_differ');
-   if(this.state.phase==='installed'){const changed=o.role==='client'&&o['usb-backend']==='networkd'?this.networkdUsbOrder():false;if(changed)this.ctl('daemon-reload');return {...this.check(),unchanged:!changed,...(changed?{usbBootOrderRepaired:true}: {})};}
+   if(this.state.phase==='installed'){const changed=o.role==='client'&&o['usb-backend']==='networkd'?this.networkdUsbOrder():false;if(changed)this.ctl('daemon-reload');return {...this.check(),settingsChanged:changed,unchanged:!changed,...(changed?{usbBootOrderRepaired:true}: {})};}
    need(this.state.phase==='uninstalled','incomplete_install_run_uninstall_first');
   }else{this.state={version:1,kind:'clean-vpn-managed-setup',identity,phase:'preparing',files:[],services:{},coreUnits:[],adminUnits:[],forward:false};this.save();}
   try{
