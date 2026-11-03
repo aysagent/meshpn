@@ -54,7 +54,7 @@ test('admin only redirects foreign-host GET/HEAD while portal fresh; API/passwor
 });
 test('real bounded UDP/TCP responders and fixed redirect, inactive failure, no POST',async t=>{
  let active=true;const r=await responders(()=>active,{address:'127.0.0.1',dnsPort:0,httpPort:0,peer:a=>a==='127.0.0.1'});t.after(()=>r.close());
- const port=r.web.address().port;assert.equal((await req(port)).headers.location,portalUrl);assert.equal((await req(port,{method:'POST'})).status,405);
+ const port=r.web.address().port;assert.equal((await req(port)).headers.location,'http://127.0.0.1/#wifi');assert.equal((await req(port,{method:'POST'})).status,405);
  const udp=dgram.createSocket('udp4');t.after(()=>udp.close());udp.send(question(),r.udp.address().port,'127.0.0.1');const [a]=await once(udp,'message');assert.equal(a.readUInt16BE(6),1);
  const s=net.connect(r.tcp.address().port,'127.0.0.1');const bytes=[];s.on('data',b=>bytes.push(b));const done=once(s,'end');const h=Buffer.alloc(2);h.writeUInt16BE(question().length);s.write(h);s.write(question().subarray(0,8));s.write(question().subarray(8));await done;assert.equal(Buffer.concat(bytes).readUInt16BE(8),1);
  active=false;assert.equal((await req(port)).status,503);
@@ -76,4 +76,17 @@ test('bind failure or lost status directory cannot prevent rule/socket cleanup',
  await assert.rejects(runPortal(c,{network,stateFile,listen:async()=>{throw Error('bind_failed');}}),/bind_failed/);assert.deepEqual(calls,['prepare','inactive','down']);calls.length=0;
  const app=await runPortal(c,{network,stateFile,sample:async()=>({state:'ready',reason:'wifi_ready'}),listen:async()=>({close:async()=>calls.push('close')})});
  await new Promise(r=>setImmediate(r));fs.rmSync(dir,{recursive:true});await assert.rejects(app.stop(),/ENOENT/);assert.deepEqual(calls,['prepare','inactive','close','down']);
+});
+
+test('Cubie portal follows .8 address including conntrack cleanup, admits only its USB peers',async()=>{
+ const calls=[],n=new CaptiveNetwork(async(f,a)=>{calls.push(a);return{code:a.includes('-C')?1:0,out:''};},{address:'192.168.8.1',subnet:'192.168.8.0/24'});
+ await n.down();assert.ok(!JSON.stringify(calls).includes('192.168.7.'));assert.ok(calls.some(a=>a.includes('192.168.8.0/24')));
+ assert.deepEqual([...portalDns(question(),true,'192.168.8.1').subarray(-4)],[192,168,8,1]);
+ assert.ok(portalPeer('192.168.8.31','192.168.8.0/24','192.168.8.1'));
+ assert.ok(!portalPeer('192.168.7.31','192.168.8.0/24','192.168.8.1'));
+});
+test('working USB tether prevents captive interception even with Wi-Fi down',async()=>{
+ const run=async(f,a)=>{assert.equal(f,'/usr/sbin/ip');return{out:JSON.stringify(a.includes('link')?[{ifname:'enx123456789012',flags:['UP','LOWER_UP']}]:a.includes('address')?[{ifname:'enx123456789012',addr_info:[{family:'inet',scope:'global',local:'172.20.10.3'}]}]:[{dst:'default',dev:'enx123456789012',gateway:'172.20.10.1'}])};};
+ assert.deepEqual(await sampleWifi(run,'auto'),{state:'ready',reason:'wired_uplink_ready'});
+ assert.equal((await sampleWifi(run)).state,'offline');
 });

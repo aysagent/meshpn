@@ -32,7 +32,7 @@ export function readPortalState(file,now=Date.now()) {
 
 // Offline, USB-scoped synthetic resolver. Never forwards or uses OS DNS.
 // TTL zero limits persistence across Wi-Fi recovery. No AAAA/HTTPS/SVCB hints.
-export function portalDns(query,active) {
+export function portalDns(query,active,address=portalAddress) {
  if(query.length<12||query.length>1232||(query.readUInt16BE(2)&0x8000))return null;
  const flags=query.readUInt16BE(2),header=Buffer.alloc(12);query.copy(header,0,0,2);
  let end=12,nameBytes=0,type=0,klass=0,code=0;
@@ -46,7 +46,7 @@ export function portalDns(query,active) {
  if(end===12)return header;
  header.writeUInt16BE(1,4);
  const parts=[header,query.subarray(12,end)];
- if(!code&&type===1){header.writeUInt16BE(1,6);parts.push(Buffer.from([0xc0,0x0c,0,1,0,1,0,0,0,0,0,4,192,168,7,1]));}
+ if(!code&&type===1){header.writeUInt16BE(1,6);parts.push(Buffer.from([0xc0,0x0c,0,1,0,1,0,0,0,0,0,4,...address.split('.').map(Number)]));}
  return Buffer.concat(parts);
 }
-export function portalPeer(ip){return ipv4Subnet(ip,portalSubnet)&&ip!==portalAddress;}
+export function portalPeer(ip,subnet=portalSubnet,address=portalAddress){return ipv4Subnet(ip,subnet)&&ip!==address;}

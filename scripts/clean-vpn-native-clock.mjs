@@ -69,7 +69,7 @@ export async function clockMain(args){
  if(mode==='serve'){
   need(!opts.length&&process.env.SSH_ORIGINAL_COMMAND==='clean-vpn-clock-v1','forced_command_required');
   const nonce=await new Promise((resolve,reject)=>{let b='';const timer=setTimeout(()=>{process.stdin.destroy();reject(Error('invalid_nonce'));},3000);process.stdin.setEncoding('ascii');process.stdin.on('data',s=>{b+=s;if(b.length>65){clearTimeout(timer);process.stdin.destroy();reject(Error('invalid_nonce'));}else if(b.endsWith('\n')){clearTimeout(timer);process.stdin.pause();resolve(b);}});process.stdin.on('end',()=>{clearTimeout(timer);reject(Error('invalid_nonce'));});});
-  need(/^[a-f0-9]{64}\n$/.test(nonce),'invalid_nonce');need(run('/usr/bin/timedatectl',['show','-p','NTPSynchronized','--value'])==='yes','exit_clock_not_synchronized');const now=Math.floor(Date.now()/1000);need(now>=MIN&&now<MAX,'invalid_exit_epoch');return {version:1,nonce:nonce.trim(),unix_seconds:now,synchronized:true};
+  need(/^[a-f0-9]{64}\n$/.test(nonce),'invalid_nonce');need(run('/usr/bin/busctl',['get-property','org.freedesktop.timedate1','/org/freedesktop/timedate1','org.freedesktop.timedate1','NTPSynchronized'])==='b true','exit_clock_not_synchronized');const now=Math.floor(Date.now()/1000);need(now>=MIN&&now<MAX,'invalid_exit_epoch');return {version:1,nonce:nonce.trim(),unix_seconds:now,synchronized:true};
  }
  need(o.config&&(mode==='apply'?eligible.has(o.failure):o.failure===undefined),'clock_arguments');const c=clockConfig(strictFlatJson(readPrivate(o.config)));
  if(mode==='probe')return {kind:'clean-vpn-authenticated-clock',status:'passed',mode,...probe(c),systemClockChanged:false};

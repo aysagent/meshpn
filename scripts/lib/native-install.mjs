@@ -72,7 +72,7 @@ export function installNative({ root = '/', name, binary, config, networkUnit, g
   const host = hostProfile ? nativeHostPlan({name,target,profile:JSON.parse(regular(hostProfile,8192,true)),engine:input,capability,node:fs.realpathSync(process.execPath)})
     : exitProfile ? nativeExitHostPlan({name,target,profile:JSON.parse(regular(exitProfile,8192,true)),engine:input,node:fs.realpathSync(process.execPath)}) : null;
   if(host){networkUnit=host.network;guardUnit=host.guard;}
-  const usbPreflight=usbCheck({root,hostProfile});
+  const usbPreflight=usbCheck({root,hostProfile,profile:hostProfile?JSON.parse(regular(hostProfile,8192,true)):undefined});
   need(!siteProfile || (networkUnit === undefined && guardUnit === undefined), 'conflicting_site_dependencies');
   const site = siteProfile ? nativeSitePlan({ name, target, site: JSON.parse(regular(siteProfile, 16384, true)), engine: input, capability }) : null;
   const clock = clockProfile ? JSON.parse(regular(clockProfile, 8192, true)) : null;

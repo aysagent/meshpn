@@ -29,7 +29,7 @@ export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSoc
  const readonly=new Set(['/api/status','/api/operations','/api/settings','/api/observer','/api/clients']);
  const server=http.createServer(async(req,res)=>{let locked=false;for(const[k,v]of Object.entries(security))res.setHeader(k,v);try{
  need(allowed(req),'usb_only',403);
- if(!acceptedHosts().includes(req.headers.host)&&['GET','HEAD'].includes(req.method)&&!req.url.startsWith('/api/')&&c.brokerSocket&&readPortalState(path.dirname(c.brokerSocket)+'/captive.json').active){res.writeHead(302,{location:portalUrl,connection:'close'});res.end();return;}
+ if(!acceptedHosts().includes(req.headers.host)&&['GET','HEAD'].includes(req.method)&&!req.url.startsWith('/api/')&&c.brokerSocket&&readPortalState(path.dirname(c.brokerSocket)+'/captive.json').active){res.writeHead(302,{location:c.address==='192.168.8.1'?'http://192.168.8.1/#wifi':portalUrl,connection:'close'});res.end();return;}
  need(acceptedHosts().includes(req.headers.host),'invalid_host',403);
  const mutation=req.method!=='GET';if(mutation){need(req.method==='POST','method',405);need(req.headers.origin==='http://'+req.headers.host,'origin',403);}
  if(req.url==='/api/login'){need(req.method==='POST','method',405);const p=await body(req,1024);exact(p,['password']);const s=await auth.login(p.password,req.socket.remoteAddress);send(res,200,{csrf:s.csrf,defaultPassword:s.defaultPassword},{'set-cookie':cookie(s.sid)});return;}

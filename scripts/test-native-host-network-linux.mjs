@@ -15,16 +15,17 @@ const cmd=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:20000,maxBuffer:1024*
 const ip=(...a)=>cmd('ip',a);
 assert.deepEqual(JSON.parse(ip('-j','link')).map(l=>l.ifname),['lo']);
 let checks=0;const check=(name,fn)=>{fn();console.log('HOST_NETWORK_CHECK '+name);checks++;};
-let c={version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
+const cubie=process.env.CVPN_CUBIE_PROFILE==='1',usbAddress=cubie?'192.168.8.1':'192.168.7.1',usbSubnet=cubie?'192.168.8.0/24':'192.168.7.0/24',uplink=cubie?'enx123456789012':'wlan0';
+let c={...(cubie?{usb_address:usbAddress,uplink:'auto'}:{}),version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
 ip('link','set','lo','up');
-for(const [dev,address] of [['usb0','192.168.7.1/24'],['wlan0','192.168.1.8/24']]){
+for(const [dev,address] of [['usb0',usbAddress+'/24'],[uplink,'192.168.1.8/24']]){
   ip('link','add',dev,'type','dummy');ip('addr','add',address,'dev',dev);ip('link','set',dev,'up');
 }
-ip('route','add','default','via','192.168.1.1','dev','wlan0');
+ip('route','add','default','via','192.168.1.1','dev',uplink);
 cmd('sysctl',['-w','net.ipv4.ip_forward=1']);
-cmd('iptables',['-t','nat','-A','POSTROUTING','-o','wlan0','-m','comment','--comment','foreign-sentinel','-j','MASQUERADE']);
+cmd('iptables',['-t','nat','-A','POSTROUTING','-o',uplink,'-m','comment','--comment','foreign-sentinel','-j','MASQUERADE']);
 const guard=args=>cmd('bash',[root+'scripts/autostart/killswitch.sh',...args]);
-guard(['up','--scope=both','--ipv6=block','--tun=tun0','--server='+c.exit_ip,'--ssh-port=22','--usb-dns=1','--usb-strict=1']);
+guard(['up','--scope=both','--ipv6=block','--tun=tun0','--server='+c.exit_ip,'--ssh-port=22','--usb-dns=1','--usb-strict=1','--usb-subnet='+usbSubnet]);
 const before={routes:ip('-N','-j','-4','route','show','table','main'),rp:cmd('sysctl',['-n','net.ipv4.conf.all.rp_filter']),nat:cmd('iptables',['-t','nat','-S']),mangle:cmd('iptables',['-t','mangle','-S']),filter:cmd('iptables',['-S'])};
 let engineAlive=false,active=true,crashAt=null,store,host,dns,redirect,owner,redirectCrash=false;
 const run=(f,a)=>{
@@ -49,15 +50,15 @@ const baseline=()=>{
   assert.equal(ip('-N','-j','-4','route','show','table','main'),before.routes);
   assert.equal(cmd('sysctl',['-n','net.ipv4.conf.all.rp_filter']),before.rp);
   assert.equal(cmd('iptables',['-t','nat','-S']),before.nat);assert.equal(cmd('iptables',['-t','mangle','-S']),before.mangle);
-  assert.equal(cmd('iptables',['-S']),before.filter);assert.match(guard(['status']),/IPv6: cvks4/);
+  assert.equal(cmd('iptables',['-S']),before.filter);assert.match(guard(['status']),new RegExp('IPv6: '+(cubie?'cvks5':'cvks4')));
 };
 try{
   open();check('preflight leaves routes/firewall untouched',()=>{owner.preflight();baseline();});
   check('prepare creates real persistent TUN, routes, DNS and NAT',()=>{owner.prepare();assert.equal(store.read().stage,'active');owner.tick();assert.equal(JSON.parse(ip('-j','route','get','1.1.1.1'))[0].dev,'tun0');});
   check('default loss waits without tearing down or exhausting restart budget',()=>{
-    ip('route','del','default','via','192.168.1.1','dev','wlan0');
+    ip('route','del','default','via','192.168.1.1','dev',uplink);
     for(let i=0;i<8;i++)assert.equal(owner.tick().state,'waiting-uplink');
-    assert.equal(store.read().stage,'active');ip('route','add','default','via','192.168.1.1','dev','wlan0');assert.equal(owner.tick().state,'network-ready');
+    assert.equal(store.read().stage,'active');ip('route','add','default','via','192.168.1.1','dev',uplink);assert.equal(owner.tick().state,'network-ready');
   });
   check('live engine prevents cleanup',()=>{engineAlive=true;assert.throws(()=>owner.recover(),/still_running/);engineAlive=false;});
   check('replaced alias refuses deletion',()=>{ip('link','set','tun0','alias','foreign');assert.throws(()=>owner.recover(),/owner_changed/);ip('link','set','tun0','alias','cvpn-native-host-'+store.read().id);});
@@ -82,7 +83,7 @@ try{
   });
   close();open();check('non-default peer recovery restores baseline after process boundary',()=>{owner.recover();baseline();});
   close();c=previous;open();
-  close();c={...previous,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:previous.exit_ip,listen_port:10443,deny_ipv4:[]}};open();
+  close();c={...previous,combo_redirect:{interface:'usb0',subnet:usbSubnet,endpoint:previous.exit_ip,listen_port:10443,deny_ipv4:[]}};open();
   check('combo overlay redirects USB HTTPS only after native DNS and route preparation',()=>{
     owner.prepare();owner.tick();assert.equal(redirect.state.stage,'active');
     assert.match(cmd('iptables',['-t','nat','-S']),/REDIRECT --to-ports 10443/);
@@ -106,7 +107,7 @@ try{
     check('interrupted incoming rule '+point,()=>assert.throws(()=>owner.prepare(),/simulated_process_boundary/));
     crashAt=null;close();open();check('recover incoming rule '+point,()=>{owner.recover();baseline();});
   }
-  close();c={...c,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:c.exit_ip,listen_port:10443,deny_ipv4:[]}};open();
+  close();c={...c,combo_redirect:{interface:'usb0',subnet:usbSubnet,endpoint:c.exit_ip,listen_port:10443,deny_ipv4:[]}};open();
   check('incoming INPUT precedence composes with combo hooks and cleanup',()=>{owner.prepare();owner.tick();close();open();owner.recover();baseline();});
   console.log(JSON.stringify({status:'passed',checks,scope:'real-netns-TUN-DNS-routes-NAT; systemd state injected; no VPN payload or reboot'}));
 }finally{close();}

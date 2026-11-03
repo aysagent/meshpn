@@ -56,3 +56,14 @@ test('incoming grant is one exit source and TCP port; peer interface and replies
   assert.equal(plan[3].spec.at(-1),'DROP');assert.equal(plan[4].spec.at(-1),'DROP');
   assert.throws(()=>validateNativeHostConfig({...profile,incoming_tcp,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:profile.exit_ip,listen_port:9443,deny_ipv4:[]}}),/native_incoming_relay_port_conflict/);
 });
+
+test('Cubie profile keeps SNAT and combo scoped to .8, refuses cross-subnet binding',()=>{
+ const c={...profile,usb_address:'192.168.8.1',uplink:'auto'};
+ validateNativeHostConfig(c);
+ const plan=nativeHostNatPlan('b'.repeat(24),'10.99.0.2',undefined,c);
+ assert.ok(plan.every(o=>o.spec.includes('192.168.8.0/24')));
+ assert.ok(!JSON.stringify(plan).includes('192.168.7.'));
+ for(const usb_address of ['192.168.1.1','0.0.0.0',null])assert.throws(()=>validateNativeHostConfig({...c,usb_address}));
+ for(const uplink of ['usb0','tun0','lo','x;id'])assert.throws(()=>validateNativeHostConfig({...c,uplink}));
+ assert.throws(()=>validateNativeHostConfig({...c,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:c.exit_ip,listen_port:10443,deny_ipv4:[]}}));
+});

@@ -186,6 +186,6 @@ test('DNS audit accepts one non-default native peer but refuses mixed or reserve
 
 test('guard declares native peer DNS support without inspecting host state',()=>{
   const r=spawnSync('bash',[file,'capabilities'],{encoding:'utf8'});
-  assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true});
+  assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true,usb_subnet:true});
   assert.notEqual(spawnSync('bash',[file,'capabilities','--scope=both'],{encoding:'utf8'}).status,0);
 });

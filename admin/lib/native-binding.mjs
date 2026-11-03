@@ -1,6 +1,7 @@
 // Read an explicitly selected standalone host installation. Never infer a VPN
 // from process argv, an old service, or files belonging to another instance.
 import fs from 'node:fs';
+import {nativeHostProfile} from '../../scripts/lib/native-host-profile.mjs';
 import {readOwned,binaryDigest} from '../../scripts/lib/native-binary-update.mjs';
 import {need} from './common.mjs';
 export function nativeAdminBinding(name,{root=''}={}){
@@ -23,6 +24,6 @@ export function nativeAdminBinding(name,{root=''}={}){
   need(binaryDigest(readOwned(at('/etc/systemd/system/'+unit)))===manifest.files.find(f=>f.name===file)?.sha256,'native_unit_changed');
  }
  need(fs.statSync(at(bundle+'/engine')).isFile(),'native_engine_missing');
- return{bundle,vpnUnit:manifest.unit,networkUnit:manifest.networkUnit,guardUnit:manifest.guardUnit,
+ return{hostProfile:nativeHostProfile(network),bundle,vpnUnit:manifest.unit,networkUnit:manifest.networkUnit,guardUnit:manifest.guardUnit,
   guardScript:network.guard_script,engine:bundle+'/engine',vpnConfig:bundle+'/config.json',nativeManaged:true,config};
 }

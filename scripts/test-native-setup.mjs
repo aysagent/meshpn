@@ -45,3 +45,10 @@ test('corrupt forwarding ownership journal is refused before sysctl mutation',t=
  const {n,root,calls}=owner(t);fs.writeFileSync(root+'/var/lib/clean-vpn/setup/forwarding.json',JSON.stringify({version:1,original:'0',owners:['exit','exit']}));
  assert.throws(()=>n.forward(true),/forwarding_journal_invalid/);assert.equal(calls.length,0);
 });
+
+test('explicit existing networkd profile preserves DHCP and gadget instead of creating dnsmasq',t=>{
+ const root=temp(t),o=setupOptions('install',['--role=client','--bundle=/root/client.json','--usb-backend=networkd','--usb-address=192.168.8.1','--uplink=auto']);
+ let inspections=0;const n=new NativeSetup(o,{root,run:()=>{throw Error('must not mutate existing USB');},usb:({profile})=>{assert.equal(profile.usb_address,'192.168.8.1');assert.equal(profile.usb_backend,'networkd');inspections++;return{status:'passed'};}});
+ n.usbSetup();assert.equal(inspections,1);assert.deepEqual(fs.readdirSync(root),[]);
+ assert.throws(()=>setupOptions('install',['--role=client','--bundle=/root/x','--usb-address=192.168.8.1']),/usb_networkd_required/);
+});

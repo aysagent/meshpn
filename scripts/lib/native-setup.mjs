@@ -10,6 +10,7 @@ import {parseArgs} from 'node:util';
 import {parseRuntimeConfig,createRuntimeConfig} from '../clean-vpn-native-runtime-config.mjs';
 import {importClientBundle,readClientPrivate} from './native-client-manager.mjs';
 import {installNative} from './native-install.mjs';
+import {nativeHostProfile} from './native-host-profile.mjs';
 import {inspectNativeUsb} from './native-usb-preflight.mjs';
 import {networkdGateText} from './host-networkd-gate.mjs';
 export const repository=fileURLToPath(new URL('../../',import.meta.url)).replace(/\/$/,'');
@@ -26,12 +27,13 @@ export const usage=`Native clean-vpn (Linux/systemd; Node 22+; no Python runtime
 Options: --type=combo-tls|boring-tls (exit default combo), --port=443,
   --clients=1..32 (default 3), --name=NAME, --binary=/absolute/engine,
   --profile=FILE, --no-clock, --jobs=1..8, --plan.
-Client host profile: usb0 192.168.7.1/24, wlan0. Fresh USB setup requires one UDC.
+Client defaults: usb0 192.168.7.1/24, wlan0; fresh USB requires one UDC.
+Existing Armbian networkd gadget: --usb-backend=networkd --usb-address=192.168.8.1 --uplink=auto.
 Install starts/enables owned services. Uninstall retains credentials/settings/replay.
 No apt commands are run automatically. Existing foreign installations are refused.`;
 export function setupOptions(action,args){
  need(['install','uninstall'].includes(action),'setup_action');
- const strings=['role','endpoint','listen','uplink','type','port','clients','name','binary','profile','bundle','jobs'];
+ const strings=['role','endpoint','listen','uplink','type','port','clients','name','binary','profile','bundle','jobs','usb-address','usb-backend'];
  const {values:v}=parseArgs({args,options:{...Object.fromEntries(strings.map(k=>[k,{type:'string'}])),...Object.fromEntries(['help','admin-ui','no-clock','plan','check'].map(k=>[k,{type:'boolean'}]))}});
  const keys=args.filter(a=>a.startsWith('--')).map(a=>a.split('=')[0]);need(new Set(keys).size===keys.length,'duplicate_option');
  if(v.help)return {help:true};need(['exit','client'].includes(v.role),'role_required');
@@ -42,8 +44,8 @@ export function setupOptions(action,args){
  need(/^[1-9][0-9]*$/.test(v.port)&&+v.port<=65535,'port');need(/^[1-9][0-9]*$/.test(v.clients)&&+v.clients<=32,'clients');need(/^[1-8]$/.test(v.jobs),'jobs');
  need(!v.type||['combo-tls','boring-tls'].includes(v.type),'transport');
  for(const k of ['binary','profile','bundle'])if(v[k])need(path.isAbsolute(v[k])&&path.normalize(v[k])===v[k]&&/^\/[\w./-]+$/.test(v[k]),'absolute_path_required');
- if(v.role==='exit'){need(isIPv4(v.endpoint),'numeric_public_endpoint_required');if(v.listen)need(isIPv4(v.listen),'local_listener_ipv4');if(v.uplink)need(/^[a-zA-Z0-9_.-]{1,15}$/.test(v.uplink),'uplink');need(!v.bundle,'exit_bundle_option');v.type??='combo-tls';}
- else {need(Boolean(v.bundle),'client_bundle_required');need(!v.endpoint&&!v.listen&&!v.uplink&&!v.profile,'exit_only_options');}
+ if(v.role==='exit'){need(isIPv4(v.endpoint),'numeric_public_endpoint_required');if(v.listen)need(isIPv4(v.listen),'local_listener_ipv4');if(v.uplink)need(/^[a-zA-Z0-9_.-]{1,15}$/.test(v.uplink),'uplink');need(!v.bundle&&!v['usb-address']&&!v['usb-backend'],'exit_bundle_option');v.type??='combo-tls';}
+ else {need(Boolean(v.bundle),'client_bundle_required');need(!v.endpoint&&!v.listen&&!v.profile,'exit_only_options');nativeHostProfile({usb_address:v['usb-address'],uplink:v.uplink});need(!v['usb-backend']||['dnsmasq','networkd'].includes(v['usb-backend']),'usb_backend');need((v['usb-address']??'192.168.7.1')==='192.168.7.1'||v['usb-backend']==='networkd','usb_networkd_required');}
  return {...v,action};
 }
 function atomic(p,value,mode=0o600){
@@ -84,7 +86,7 @@ export class NativeSetup {
   need(fs.readFileSync(this.at('/proc/1/comm'),'utf8').trim()==='systemd','systemd_required');
   if(o.action==='check')return this.check();
   if(o.action==='uninstall'){need(exists(this.manifest),'not_installed');this.state=JSON.parse(safeRead(this.manifest));return this.remove();}
-  const identity={role:o.role,name:o.name,endpoint:o.endpoint??null,listen:o.listen??null,uplink:o.uplink??null,profile:o.profile?sha(readClientPrivate(o.profile)):null,binary:o.binary??null,bundle:o.bundle?sha(readClientPrivate(o.bundle)):null,adminUi:!!o['admin-ui'],clock:!o['no-clock'],type:o.type??null,port:o.port,clients:o.clients};
+  const identity={...('usb-address' in o?{usbAddress:o['usb-address']}:{}),...('usb-backend' in o?{usbBackend:o['usb-backend']}:{}),role:o.role,name:o.name,endpoint:o.endpoint??null,listen:o.listen??null,uplink:o.uplink??null,profile:o.profile?sha(readClientPrivate(o.profile)):null,binary:o.binary??null,bundle:o.bundle?sha(readClientPrivate(o.bundle)):null,adminUi:!!o['admin-ui'],clock:!o['no-clock'],type:o.type??null,port:o.port,clients:o.clients};
   fs.mkdirSync(this.base,{recursive:true,mode:0o700});parents(this.manifest);
   if(exists(this.manifest)){
    this.state=JSON.parse(safeRead(this.manifest));need(JSON.stringify(this.state.identity)===JSON.stringify(identity),'existing_install_options_differ');
@@ -99,7 +101,7 @@ export class NativeSetup {
    if(!exists(this.at(this.bundle+'/installed.json'))){
     this.state.coreIntent=true;this.save();
     const args={root:this.root||'/',name:o.name,binary:this.binary,config:this.config,tunHelper:this.helper,apply:true};
-    const host=this.base+'/host.json';atomic(host,o.role==='exit'?{version:1,uplink:this.uplink}:{version:1,guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'});
+    const host=this.base+'/host.json';atomic(host,o.role==='exit'?{version:1,uplink:this.uplink}:{version:1,guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh',...this.hostOptions()});
     if(o.role==='exit')args.exitProfile=host;else args.hostProfile=host;
     if(this.clock)args.clockProfile=this.clock;
     this.install(args);
@@ -132,7 +134,8 @@ export class NativeSetup {
    need(!this.run('/usr/bin/ss',['-H','-lnt','sport','=',':'+this.o.port]),'exit_port_busy');
   }else{
    need(exists(this.at('/sys/class/net/wlan0')),'wlan0_required');
-   if(!exists(this.at('/usr/local/bin/usb-gadget-start.sh')))need(fs.readdirSync(this.at('/sys/class/udc')).length===1,'single_usb_udc_required');
+   if(this.o['usb-backend']==='networkd')need(this.usb({profile:this.hostOptions()}).status==='passed','usb_networkd_preflight_failed');
+   else if(!exists(this.at('/usr/local/bin/usb-gadget-start.sh')))need(fs.readdirSync(this.at('/sys/class/udc')).length===1,'single_usb_udc_required');
   }
   if(!this.state.coreIntent)for(const p of [this.bundle,'/etc/systemd/system/'+this.unit,'/etc/systemd/system/'+this.owner])need(!exists(this.at(p)),'native_install_collision');
   if(this.o['admin-ui']&&!this.state.adminIntent)for(const p of ['/opt/meshpn-admin','/etc/meshpn-admin'])need(!exists(this.at(p)),'admin_install_collision');
@@ -216,7 +219,9 @@ export class NativeSetup {
    this.state.forward=false;this.save();
   }
  }
+ hostOptions(){return {...(this.o['usb-address']?{usb_address:this.o['usb-address']}:{}),...(this.o.uplink?{uplink:this.o.uplink}:{}),...(this.o['usb-backend']?{usb_backend:this.o['usb-backend']}: {})};}
  usbSetup(){
+  if(this.o['usb-backend']==='networkd'){need(this.usb({profile:this.hostOptions()}).status==='passed','usb_networkd_preflight_failed');return;}
   const script='/usr/local/bin/usb-gadget-start.sh',drop='/etc/systemd/system/usb-gadget.service.d/40-meshpn-dhcp.conf';
   this.rememberService('dnsmasq.service');this.rememberService('usb-gadget.service');
   const previous=this.state.files.find(f=>f.path===script);
@@ -243,7 +248,7 @@ export class NativeSetup {
  guard(){
   const script='/usr/local/bin/clean-vpn-killswitch.sh';
   this.rememberService('clean-vpn-killswitch.service');this.file(script,fs.readFileSync(this.source+'/scripts/autostart/killswitch.sh'),0o755);
-  const args=['up','--scope=both','--ipv6=block','--tun=tun0','--ssh-port=22','--server='+this.endpoint,'--usb-dns=1','--usb-strict=1'];
+  const args=['up','--scope=both','--ipv6=block','--tun=tun0','--ssh-port=22','--server='+this.endpoint,'--usb-dns=1','--usb-strict=1','--usb-subnet='+nativeHostProfile(this.hostOptions()).subnet];
   this.run(this.at(script),['plan',...args.slice(1)]);
   this.file('/etc/systemd/system/clean-vpn-killswitch.service','# clean-vpn-networkd-gate-v1\n[Unit]\nDescription=clean-vpn persistent guard\nDefaultDependencies=no\nBefore=network-pre.target shutdown.target\nWants=network-pre.target\nConflicts=shutdown.target\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart='+script+' '+args.join(' ')+'\nExecStop=/bin/true\n[Install]\nWantedBy=multi-user.target\n');
   for(const unit of ['systemd-networkd.service','systemd-networkd.socket'])if(this.prop(unit,'LoadState')==='loaded')this.file('/etc/systemd/system/'+unit+'.d/90-clean-vpn-clean-vpn.conf',networkdGateText('clean-vpn'));
