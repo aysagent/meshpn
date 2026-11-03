@@ -3,6 +3,8 @@
 Физическая установка `daily` уже активна с автозапуском:
 [результаты reboot, админка и команды](clean-vpn-native-daily-20261029.md).
 Сам installer по-прежнему устанавливает выключенные службы и не активирует их неявно.
+Новая пара с актуальными combo-параметрами и отдельными ключами:
+[пошаговая установка](clean-vpn-native-new-pair.md).
 
 Checkpoint 2026-10-29. Новый `--host-profile` устанавливает выключенный сетевой
 owner для проверенного Radxa IPv4-профиля. Старый Node.js VPN не запускается,
@@ -51,7 +53,7 @@ sudo python3 scripts/clean-vpn-usb-boot-order.py --apply
 
 ## Ограниченный контракт
 
-- boring-tls client, `tun0`, peer IPv4 `10.99.0.2–10.99.0.254/32` (по умолчанию `.2`), MTU 1400, native DNS включён;
+- boring-tls либо combo-tls client с boring packet-веткой: `tun0`, peer IPv4 `10.99.0.2–10.99.0.254/32` (по умолчанию `.2`), MTU 1400, native DNS включён;
 - uplink `wlan0` с единственным IPv4 default gateway;
 - USB `usb0`, `192.168.7.1/24`, уже настроенный forwarding=1;
 - независимый активный cvks4 guard both/block с тем же exit и SSH port 22;

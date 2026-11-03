@@ -1,4 +1,7 @@
-# Native boring-tls exit на существующем VPS
+# Native boring-tls / combo-tls exit на VPS
+
+Для новой пары с параметрами действующей Radxa/VPS, включая выпуск и перенос
+ключей, см. [пошаговую установку](clean-vpn-native-new-pair.md).
 
 `--exit-profile` устанавливает **выключенный** native exit и отдельный сетевой
 owner. Подходит для IPv4 VPS с уже настроенным forwarding, где нельзя заменять
@@ -8,7 +11,8 @@ owner. Подходит для IPv4 VPS с уже настроенным forward
 
 ## Контракт
 
-- Engine role `exit`, transport `boring-tls` (или поле transport отсутствует).
+- Engine role `exit`, transport `boring-tls` (или поле transport отсутствует)
+  либо `combo-tls` с вложенными `boring`/`transparent` на одном listener.
 - `address` — локальный IPv4 адрес listener; `port` проверяется engine при bind.
   За внешним NAT публичный адрес для клиентов может отличаться от локального bind.
 - TUN: `cvexit` с необязательным суффиксом до восьми строчных букв/цифр,
@@ -25,8 +29,9 @@ Native engine поддерживает `secret_path` либо `peers` с отд�
 Сам owner не вводит второй протокол авторизации: аутентификацию и проверку
 источника packet payload выполняет C++. Эта новая lifecycle-матрица проверяет
 одного живого клиента; [multi-peer](clean-vpn-native-clients.md) имеет отдельные
-тесты. Radxa client host-profile пока фиксирует `10.99.0.2`, поэтому нельзя
-выдавать нескольким таким client одинаковый адрес и считать их независимыми.
+тесты. Radxa client host-profile поддерживает `peer_ipv4` в диапазоне
+`10.99.0.2–10.99.0.254`; адрес по умолчанию `.2`. Одновременно работающим
+клиентам нужны отдельные адреса и ключи.
 
 ## Установка и управление
 
@@ -50,7 +55,8 @@ node scripts/clean-vpn-native-install.mjs \
 ключа и PSK; для создания credentials есть
 [offline runtime bundle generator](clean-vpn-native-runtime.md).
 `--exit-profile` несовместим с `--host-profile`, `--site-profile` и внешними
-`--network-unit/--guard-unit`. Он не предназначен для transparent/combo.
+`--network-unit/--guard-unit`. Combo поддерживается, standalone transparent
+требует другого сетевого профиля.
 
 После отдельной публикации с `--apply` и `systemctl daemon-reload`:
 
