@@ -118,3 +118,37 @@ jobs. Она использует заглушки ExecStart и не прове�
 чтение журнала и проверка/откат последних owned drop-ins. Отрицательная
 проверка USB kill switch после reboot пока НЕ выполнена.
 Новый exit отдельно проверен: healthy на TCP 443; Telegram proxy остановлен.
+
+## Восстановление UFS из SD
+
+Пользователь загрузил A7Z с SD, SSH `192.168.7.1`. Проверены device-tree model
+`Radxa Cubie A7Z`, root `/dev/mmcblk0p1`, UFS `/dev/sda1`, UUID
+`f57f69a0-ca41-4383-a118-b9df026556b5`. Это новая rescue-система, а не прежняя
+Radxa на таком же IP; использован отдельный SSH known_hosts.
+
+UFS сначала смонтирована ro,noload. Журналы последних четырёх boot доходят
+до запуска gadget/firewall/guard/networkd и basic/network.target (~13–15 s),
+явной причины выключения в сохранённой части нет. Это не доказательство
+отсутствия поздней ошибки. `e2fsck -fn` на размонтированном разделе завершился
+с кодом 0, без структурных ошибок; часы SD отстают, поэтому была отметка
+о last mount time в будущем. Автоматический repair не запускался.
+
+Обратимое восстановление выполнено, но загрузка UFS после него ещё не проверена:
+
+- Замаскированы только 8 project units: guard, native client/network/clock,
+  admin broker/captive/web/socket. Конфигурации и ключи не удалены.
+- Убраны два networkd gate drop-in и два новых vendor/guard ordering drop-in.
+- Сохранены включёнными штатные SSH, networkd, vendor gadget/firewall.
+  VPN и kill switch выключены; штатный direct forwarding может работать.
+- Для диагностики временно `armbian-ramlog ENABLED=false` и journald drop-in
+  `99-clean-vpn-recovery.conf` (persistent, SyncIntervalSec=1s, max 64M).
+- Backup на SD и UFS: `/root/cvpn-ufs-recovery-20261104/before.tar`, SHA256
+  `94f96ea4433416c9b01872541ee3e82fe8c21a11bcd55166a8c1484e52d3b886`.
+  На UFS там же перемещённые units/drop-ins и README; на SD — recovery shell.
+- Boot/USB/networkd/zram конфигурации сравнены с backup: не изменены.
+  UFS синхронизирована и размонтирована. Перезагрузка/poweroff не выдавались.
+
+Далее: выключить SD-систему, извлечь SD после остановки, загрузить UFS и
+проверить SSH **192.168.8.1**. Админка на этом этапе отключена намеренно.
+Не восстанавливать все службы сразу и не объявлять первопричину установленной
+до чтения нового boot-журнала. Временные настройки логирования затем вернуть.
