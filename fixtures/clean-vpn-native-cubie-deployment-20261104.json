@@ -35,7 +35,11 @@
       "ordinaryColdBoot": "subsequent normal-target reboot failed: USB absent, screen dark; cause unknown",
       "stockNetworkdHandoff": "passed with rollback timer",
       "stockSshHandoff": "passed with independent IPv4 SSH and original host key",
-      "normalTargetWithRescueUsb": "failed after clean systemd verification; awaiting SD journal and restore of working rescue boot"
+      "normalTargetWithRescueUsb": "failed; boot 3181398599614449b692656631caf3e6 journal preserved; working rescue restored",
+      "restoredRescueBootId": "c8552771-c665-48bb-9f9f-b66b330de006",
+      "restoredRescue": "SSH IPv4/IPv6 and DHCP passed; staged multi-user and stock networkd/sshd handoff passed",
+      "usbAdminRestored": "HTTP 200 from board and Mac; broker/web/socket restored, VPN still masked",
+      "iphoneUsbUplink": "support installed; phone absent from USB enumeration at inspection; awaiting physical connection"
     }
   },
   "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]

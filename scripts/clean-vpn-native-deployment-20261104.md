@@ -297,3 +297,32 @@ networkd выбрал recovery .network, затем запуск дошёл до
 последний vendor gadget override убран и сохранён в recovery directory.
 Vendor firewall/project units остаются masked. UFS sync + unmount выполнены.
 Запрошено физическое возвращение с SD на этот проверенный rescue режим.
+
+### Повторное восстановление подтверждено
+
+UFS rescue снова загрузилась: boot `c8552771-c665-48bb-9f9f-b66b330de006`,
+root `/dev/sda1`, DHCP UDP 67 и SSH USB IPv6/IPv4 работают, console NRestarts=0.
+Поэтапный запуск до multi-user снова прошёл; checkpoints в
+`stages-c8552771.log`. Поток dmesg дополнительно записывался на Mac в
+`/private/tmp/cvpn-a7z-c8552771-kernel.log` (ограничение 600 секунд).
+Networkd/sshd переданы штатным units с rollback timers; независимый SSH
+подтверждён, timers отменены. Failed units нет.
+
+Восстановлены из backup только `meshpn-admin-broker.service`,
+`meshpn-admin-web.service`, `meshpn-admin.socket`. Админка на
+`http://192.168.8.1/` дала HTTP 200 и с платы, и с Mac через en20.
+VPN/network owner/clock/kill switch, captive и vendor firewall пока masked.
+Rescue boot env оставлен без изменений; новой перезагрузки не выдавалось.
+
+Пользователь подтвердил питание от Mac. System Profiler для gadget сообщает
+bus_power=500, bus_power_used=250, extra_current_used=0 (мА). Это объявленные
+USB-параметры, а не измерение мощности или доказательство причины отказа.
+Radxa рекомендует 5 В / 3 А или выше:
+https://docs.radxa.com/en/cubie/a7z/hardware-use/type-c .
+
+Пользователь попросил не настраивать Wi-Fi: uplink должен быть через USB iPhone.
+Уже есть DKMS ipheth, usbmuxd и
+`/etc/systemd/network/09-armbian-iphone-uplink.network` (Driver=ipheth, DHCPv4,
+RouteMetric=50). На момент проверки lsusb/idevice_id телефона не показывают;
+на внешнем xHCI видны USB-хаб и Cardputer. Запрошено уточнение кабеля/порта.
+Wi-Fi профили не менялись, сеть Mac не менялась, интернет на плате пока не проверен.
