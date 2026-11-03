@@ -126,7 +126,10 @@ export class NativeSetup {
  }
  preflight(){
   need(Number(process.versions.node.split('.')[0])>=22,'node_22_or_newer_required');
-  for(const tool of ['ip','iptables','ip6tables','flock','openssl','systemctl','bash','c++',...(this.o['admin-ui']?['cc','pkg-config','busctl','wpa_cli','conntrack']:[]),...(!this.o['no-clock']?['ssh','ssh-keygen']:[])])this.run('/usr/bin/env',['sh','-c','command -v "$1"','check',tool]);
+  for(const tool of ['ip','iptables','ip6tables','flock','openssl','systemctl','bash','c++',...(this.o['admin-ui']?['cc','pkg-config','busctl','wpa_cli','conntrack','dig','curl','ping','tcpdump']:[]),...(!this.o['no-clock']?['ssh','ssh-keygen']:[])])this.run('/usr/bin/env',['sh','-c','command -v "$1"','check',tool]);
+  // Refuse unsafe roots/runtime before forwarding or guard publication.
+  for(const p of ['/opt/clean-vpn-native','/etc/systemd/system/native-install-check','/usr/local/bin/clean-vpn-killswitch.sh'])parents(this.at(p));
+  safeRead(fs.realpathSync(process.execPath));
   need(exists(this.at('/dev/net/tun')),'tun_device_missing');
   if(this.o.role==='exit'){
    const routes=JSON.parse(this.run('/usr/sbin/ip',['-j','-4','route','show','default']));this.uplink=this.o.uplink??routes[0]?.dev;need(/^[a-zA-Z0-9_.-]{1,15}$/.test(this.uplink??''),'uplink_required');
