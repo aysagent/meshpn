@@ -283,3 +283,17 @@ USB не появился, SSH по USB IPv4/IPv6 и прежнему uplink н�
 новый vendor gadget recovery drop-in (сохранив его копию). Vendor firewall и
 project units оставить masked. Вернуться к доказанно рабочему rescue boot;
 новые boot-изменения делать только на основании полученных данных.
+
+SD снова доступна, root `/dev/mmcblk0p1`; UUID UFS подтверждён. Получен
+неудачный boot `3181398599614449b692656631caf3e6`: USB helper успел завершиться,
+networkd выбрал recovery .network, затем запуск дошёл до basic.target (~14 s).
+Явного panic/shutdown в сохранённом журнале нет. Последнее сообщение ALSA
+само по себе не является диагнозом: такое же сообщение есть на рабочей SD
+и в успешном rescue boot, ALSA state files совпадают по SHA256.
+
+Журнал сохранён на обоих носителях как `ordinary-31813985.log`.
+Точный рабочий env возвращён (SHA256
+`960920cfe5bac9e635c20e58c25135205f902c6e633722ea14cbc8fffd600149`),
+последний vendor gadget override убран и сохранён в recovery directory.
+Vendor firewall/project units остаются masked. UFS sync + unmount выполнены.
+Запрошено физическое возвращение с SD на этот проверенный rescue режим.
