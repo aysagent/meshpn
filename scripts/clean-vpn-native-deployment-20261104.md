@@ -40,3 +40,19 @@ DNS, NAT, combo redirect, admin/captive/mDNS используют ту же по
 helper с фиксированными busctl/date командами (systemd 237 без timedatectl show).
 Формат nonce/ответа тот же; неподтверждённое NTP время не выдаётся.
 Runtime exit собирается в Alpine/Docker, без обновления glibc VPS.
+
+## Выявлено при первой физической перезагрузке
+
+Armbian USB firewall стартовал после раннего kill switch и вставлял свой
+`ARMBIAN_USB_GADGET_FWD` перед guard. Native audit отказывал в запуске, однако
+foreign ACCEPT разрешал прямой USB forwarding. HTTP 200 без проверки exit IP
+в этом состоянии нельзя считать успешной VPN-проверкой.
+
+Исправление включено в установщик: owned drop-ins задают порядок
+local-fs → vendor gadget → vendor USB firewall → kill switch → networkd.
+У vendor firewall отключена только неявная DefaultDependencies-связь с
+basic.target, иначе получается цикл через gated networkd.socket. Vendor
+скрипт, DHCP, gadget и resolver не заменяются. Drop-ins журналируются и
+удаляются uninstall; повтор install добавляет их к уже установленной Cubie.
+Произвольный ручной перезапуск чужого firewall во время VPN не входит в
+поддерживаемый lifecycle: он может переставить собственные rules.

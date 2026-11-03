@@ -24,8 +24,14 @@ for(const [dev,address] of [['usb0',usbAddress+'/24'],[uplink,'192.168.1.8/24']]
 ip('route','add','default','via','192.168.1.1','dev',uplink);
 cmd('sysctl',['-w','net.ipv4.ip_forward=1']);
 cmd('iptables',['-t','nat','-A','POSTROUTING','-o',uplink,'-m','comment','--comment','foreign-sentinel','-j','MASQUERADE']);
+// Existing Armbian forwarding is present before guard at boot. A broad foreign
+// ACCEPT must remain behind the guard through preparation/recovery.
+cmd('iptables',['-N','ARMBIAN_USB_GADGET_FWD']);
+cmd('iptables',['-A','ARMBIAN_USB_GADGET_FWD','-i','usb0','-s',usbSubnet,'-j','ACCEPT']);
+cmd('iptables',['-I','FORWARD','1','-j','ARMBIAN_USB_GADGET_FWD']);
 const guard=args=>cmd('bash',[root+'scripts/autostart/killswitch.sh',...args]);
 guard(['up','--scope=both','--ipv6=block','--tun=tun0','--server='+c.exit_ip,'--ssh-port=22','--usb-dns=1','--usb-strict=1','--usb-subnet='+usbSubnet]);
+assert.match(cmd('iptables',['-S','FORWARD']).split('\n')[1],/cvks2-hook -j CLEANVPN_KS_FWD/);
 const before={routes:ip('-N','-j','-4','route','show','table','main'),rp:cmd('sysctl',['-n','net.ipv4.conf.all.rp_filter']),nat:cmd('iptables',['-t','nat','-S']),mangle:cmd('iptables',['-t','mangle','-S']),filter:cmd('iptables',['-S'])};
 let engineAlive=false,active=true,crashAt=null,store,host,dns,redirect,owner,redirectCrash=false;
 const run=(f,a)=>{

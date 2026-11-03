@@ -52,3 +52,12 @@ test('explicit existing networkd profile preserves DHCP and gadget instead of cr
  n.usbSetup();assert.equal(inspections,1);assert.deepEqual(fs.readdirSync(root),[]);
  assert.throws(()=>setupOptions('install',['--role=client','--bundle=/root/x','--usb-address=192.168.8.1']),/usb_networkd_required/);
 });
+
+test('Armbian USB firewall is ordered before guard without basic/networkd boot cycle; owned and reversible',t=>{
+ const {n,root}=owner(t);n.prop=(unit,key)=>{assert.equal(unit,'armbian-usb-gadget-firewall.service');assert.equal(key,'LoadState');return 'loaded';};
+ assert.equal(n.networkdUsbOrder(),true);assert.equal(n.networkdUsbOrder(),false);
+ const vendor='/etc/systemd/system/armbian-usb-gadget-firewall.service.d/90-clean-vpn-order.conf',guard='/etc/systemd/system/clean-vpn-killswitch.service.d/20-armbian-usb.conf';
+ assert.match(fs.readFileSync(root+vendor,'utf8'),/DefaultDependencies=no\nAfter=local-fs.target armbian-usb-gadget.service\nBefore=clean-vpn-killswitch.service shutdown.target/);
+ assert.match(fs.readFileSync(root+guard,'utf8'),/Wants=armbian-usb-gadget-firewall.service\nAfter=armbian-usb-gadget-firewall.service/);
+ for(const f of n.state.files)n.restoreFile(f);assert.equal(fs.existsSync(root+vendor),false);assert.equal(fs.existsSync(root+guard),false);
+});

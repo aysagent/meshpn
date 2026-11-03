@@ -90,7 +90,7 @@ export class NativeSetup {
   fs.mkdirSync(this.base,{recursive:true,mode:0o700});parents(this.manifest);
   if(exists(this.manifest)){
    this.state=JSON.parse(safeRead(this.manifest));need(JSON.stringify(this.state.identity)===JSON.stringify(identity),'existing_install_options_differ');
-   if(this.state.phase==='installed')return {...this.check(),unchanged:true};
+   if(this.state.phase==='installed'){const changed=o.role==='client'&&o['usb-backend']==='networkd'?this.networkdUsbOrder():false;if(changed)this.ctl('daemon-reload');return {...this.check(),unchanged:!changed,...(changed?{usbBootOrderRepaired:true}: {})};}
    need(this.state.phase==='uninstalled','incomplete_install_run_uninstall_first');
   }else{this.state={version:1,kind:'clean-vpn-managed-setup',identity,phase:'preparing',files:[],services:{},coreUnits:[],adminUnits:[],forward:false};this.save();}
   try{
@@ -248,12 +248,23 @@ export class NativeSetup {
   this.ctl('enable','--now','usb-gadget.service');
   const r=this.usb();need(r.status==='passed','usb_preflight_failed');
  }
+ networkdUsbOrder(){
+  need(this.prop('armbian-usb-gadget-firewall.service','LoadState')==='loaded','armbian_usb_firewall_service_required');
+  const count=this.state.files.length;
+  // Vendor forwarding must precede the independent guard. Its normal default
+  // After=basic.target would cycle through the gated networkd.socket; remove
+  // only that implicit edge, retaining explicit local-fs/gadget prerequisites.
+  this.file('/etc/systemd/system/armbian-usb-gadget-firewall.service.d/90-clean-vpn-order.conf','# clean-vpn-owned-armbian-usb-order-v1\n[Unit]\nDefaultDependencies=no\nAfter=local-fs.target armbian-usb-gadget.service\nBefore=clean-vpn-killswitch.service shutdown.target\nConflicts=shutdown.target\n');
+  this.file('/etc/systemd/system/clean-vpn-killswitch.service.d/20-armbian-usb.conf','# clean-vpn-owned-armbian-usb-order-v1\n[Unit]\nWants=armbian-usb-gadget-firewall.service\nAfter=armbian-usb-gadget-firewall.service\n');
+  return this.state.files.length!==count;
+ }
  guard(){
   const script='/usr/local/bin/clean-vpn-killswitch.sh';
   this.rememberService('clean-vpn-killswitch.service');this.file(script,fs.readFileSync(this.source+'/scripts/autostart/killswitch.sh'),0o755);
   const args=['up','--scope=both','--ipv6=block','--tun=tun0','--ssh-port=22','--server='+this.endpoint,'--usb-dns=1','--usb-strict=1','--usb-subnet='+nativeHostProfile(this.hostOptions()).subnet];
   this.run(this.at(script),['plan',...args.slice(1)]);
   this.file('/etc/systemd/system/clean-vpn-killswitch.service','# clean-vpn-networkd-gate-v1\n[Unit]\nDescription=clean-vpn persistent guard\nDefaultDependencies=no\nBefore=network-pre.target shutdown.target\nWants=network-pre.target\nConflicts=shutdown.target\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart='+script+' '+args.join(' ')+'\nExecStop=/bin/true\n[Install]\nWantedBy=multi-user.target\n');
+  if(this.o['usb-backend']==='networkd')this.networkdUsbOrder();
   for(const unit of ['systemd-networkd.service','systemd-networkd.socket'])if(this.prop(unit,'LoadState')==='loaded')this.file('/etc/systemd/system/'+unit+'.d/90-clean-vpn-clean-vpn.conf',networkdGateText('clean-vpn'));
   this.ctl('daemon-reload');this.ctl('enable','--now','clean-vpn-killswitch.service');
  }
