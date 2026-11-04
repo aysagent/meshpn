@@ -627,3 +627,38 @@ net/mount namespace + tmpfs /run, системные service-state ответы 
 upload 262144 bytes, оба HTTP 200. После нескольких минут PID engine/owner
 прежние, NRestarts=0. Пересылка от отдельного USB-клиента этими запросами
 не проверялась. Только перезагрузка страницы нужна для новых подписей датчиков.
+
+### Стабильное имя iPhone — iphone0
+
+На A7Z активировано общее правило `10-clean-vpn-iphone.link`: Match Driver=ipheth,
+NamePolicy пустая, Name=iphone0. Сопоставления по MAC/серийному номеру/USB-порту
+нет. Скрипт установки/удаления и границы: [iphone uplink](clean-vpn-iphone-uplink.md).
+Native profile/owner принимают iphone0, прежние Ethernet/Wi-Fi имена сохранены.
+На старой Zero правило в этом сеансе не устанавливалось.
+
+Изменение доставлено через Git. Подтверждён независимый SSH по usb0/.8;
+включён отдельный 180 s rollback timer до остановки owner. Сохранены два модуля,
+installed/prepared manifests и web.json в `/root/cvpn-iphone-name-mHV0rn`.
+Проверены исходные SHA256, обновлён ownership manifest. Guard не отключался.
+Management CLI перенёс web/mDNS на iphone0, backup
+`/etc/meshpn-admin/management-backup-Qxs7Ys`. Сетевой USB interface ipheth был
+unbind/bind без перезагрузки платы и без изменения gadget/дисплея/хаба.
+
+udev после повторного обнаружения подтвердил INTERFACE/ID_NET_NAME=iphone0,
+ID_NET_LINK_FILE=/etc/systemd/network/10-clean-vpn-iphone.link. Штатный
+09-armbian-iphone-uplink.network по Driver=ipheth выдал 172.20.10.5/28,
+metric 50; Wi-Fi 172.20.10.3 metric 600 сохранён. Exit /32 идёт через iphone0.
+Engine PID 91638 ready/NRestarts=0, owner PID 89824 active. DNS UDP/TCP ответили,
+HTTPS через tun0 показал 84.201.14.124, HTTP на USB и iPhone IPv4 — 200.
+mDNS guard exception привязано к iphone0 и текущему /32, cvks5 активен для
+IPv4/IPv6. Rollback timer отменён после проверок; backup оставлен.
+
+Проверка реального повторного обнаружения пройдена; физический reboot после
+этого изменения не выполнялся. Linux config/setup tests 18/18 прошли;
+полная netns matrix отдельно запускается с CVPN_IPHONE_PROFILE=1.
+Повторный install правила идемпотентен, PID engine не изменился. С Mac
+http://192.168.8.1/ и http://mpn-cubie.local/ ответили HTTP 200; имя выбрало
+USB-адрес 192.168.8.1. Ранее известная задержка mDNS около 5 s сохраняется.
+Матрица с iphone0 завершена: 38/38 настоящих netns/TUN/DNS/routes/NAT проверок,
+без пропусков. Логи `/root/cvpn-iphone-unit.log` и `/root/cvpn-iphone-netns.log`.
+При финальной проверке оба PID прежние, NRestarts=0, failed units нет.
