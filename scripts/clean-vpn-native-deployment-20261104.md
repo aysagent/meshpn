@@ -26,8 +26,10 @@ admin broker и обновлением бинарника. Установка о
 - Установщик 4421f91 поддерживает прежний фиксированный профиль .7/wlan0/dnsmasq.
   Его нельзя без адаптации запускать на новой плате; сохранять .8 USB rescue.
 
-Статус: exit работает; приёмка клиента заблокирована отсутствием доступа после
-второй перезагрузки. Развёртывание пары НЕ завершено.
+Статус: доступ к UFS восстановлен; от отдельного БП 5 В / 3 А обычные загрузки
+и native VPN снова работают. Результаты восстановления и оставшиеся проверки
+описаны в конце документа; исходный отказ на питании от Mac не считать
+доказанным программным либо аппаратным диагнозом.
 
 Подготовлены opt-in параметры client install: `--usb-backend=networkd
 --usb-address=192.168.8.1 --uplink=auto`. Проверяется существующий Armbian gadget,
@@ -378,3 +380,91 @@ Boot env не изменён, SHA256 по-прежнему `960920cf...600149`.
 включая usbmuxd drop-in; обычный ipheth .network сохранить.
 Следующий физический шаг — штатное выключение и запуск от отдельного БП,
 с iPhone через тот же хаб. Это ещё не проверка обычного cold boot или VPN.
+
+### Отдельное питание: обычная загрузка впервые прошла
+
+Пользователь подключил A7Z к отдельному QC/PD БП с маркировкой 5 В / 3 А.
+Rescue boot `4c39b31d-df09-418b-ab12-bc0028d9c746` поднял iPhone SSH автоматически.
+
+Для дальнейшей диагностики добавлен временный
+`clean-vpn-ufs-arm-rescue-boot.service` (sysinit.target.requires): после remount-fs
+и до sysinit/basic атомарно возвращает проверенный rescue boot env для
+**следующего** включения. Проверяет SHA256 backup, sync, пишет boot ID/uptime
+в `one-shot-boot-arm.log`. В rescue kernel command line unit пропускается.
+Восстановление env предварительно отрепетировано. Это защита от повторного
+ручного восстановления через SD, если отказ происходит после раннего шага.
+
+Одноразовая обычная загрузка от БП прошла: boot
+`40791a86-9327-45ae-807d-1a2198ef7c71`, kernel command line без rescue target,
+graphical/multi-user/networkd/sshd active, failed units/jobs нет.
+Пользователь подтвердил login на мониторе. systemd-analyze: 9.654 s kernel,
+14.134 s userspace; graphical reached after 4.752 s userspace.
+Early rescue arm сработал на uptime 11.64 s; boot env снова rescue.
+Журнал `ordinary-psu-40791a86.log` сохранён на UFS, HTTP 200 через ipheth,
+NTP synchronized. Это ещё не доказательство единственной причины питания:
+сохранялись временные usbmuxd dependency override, USB helper replacement
+и ранний recovery arm. VPN/admin/vendor firewall в проверке masked.
+
+Следующая одноразовая проверка уже подготовлена: убран только временный
+`armbian-usb-gadget.service.d/99-clean-vpn-ufs-recovery.conf`, возвращён штатный
+gadget helper (NCM auto + исходный mass storage), early rescue arm сохранён.
+Проверка прошла: boot `e83a46ab-1c78-4127-ad6d-0cc2b7e1ea14`, штатный
+`armbian_multi_gadget`, graphical/networkd/sshd active, failed units нет.
+
+### Native и админка восстановлены, проверен полный автозапуск
+
+Из сохранённых копий возвращены guard, native network/engine/clock и admin
+broker/web/socket/captive units. Включение guard+network owner сначала имело
+независимый 180 s rollback timer; preflight eligible, engine ready, новый SSH
+при guard прошёл, после проверки таймер отменён.
+
+Временная настройка usbmuxd убрана из /etc/systemd/system/usbmuxd.service.d.
+Вместо неё recovery generator
+`/etc/systemd/system-generators/clean-vpn-ufs-rescue-usbmuxd` создаёт drop-in
+только при kernel command line с rescue target. Обе ветви generator проверены
+в приватной временной копии. При обычной загрузке usbmuxd имеет штатный
+DefaultDependencies=yes и пустой DropInPaths. Восстановлены оба networkd gate
+drop-in из исходного backup (Requires/After guard).
+
+Полный обычный boot от БП `43a30d10-22ab-441e-b3dd-2f8874963e86` прошёл:
+guard/admin/network owner стартовали сами. Owner один раз повторил запуск
+через 10 s, пока iPhone не получил default route (`native_single_default_required`),
+после чего engine ready, engine NRestarts=0, текущих failed units нет.
+Локальная USB admin HTTP 200; listeners привязаны к 192.168.8.1%usb0:80/8443.
+Native DNS UDP/TCP ответили; HTTPS строго через tun0 показал exit IP
+84.201.14.124; download 1 MiB и upload 256 KiB завершились HTTP 200.
+Новый HTTPS напрямую через ipheth к 1.1.1.1 при guard завершился timeout,
+HTTP 000. Это ограниченная проверка, не полный аудит утечек.
+Лог: `full-native-psu-43a30d10.log` в recovery directory.
+
+Эти запросы идут от самой платы через packet/TUN ветку. USB-клиент и реальный
+transparent interception после восстановления отдельно ещё не проверены.
+Физического холодного запуска полного стека от БП ещё не было: выполнены
+обычные software reboot после холодного старта rescue от БП.
+
+Для сохранения прямого режима после выключения VPN/guard возвращены исходная
+vendor firewall unit и оба installer ordering drop-in (vendor до guard,
+DefaultDependencies=no у vendor). На текущем boot vendor start удерживался
+runtime ConditionPathExists, чтобы не вставлять ACCEPT перед работающим guard.
+Обычная загрузка с полным исходным порядком служб прошла:
+`b24d94dd-900c-442d-85ed-a8c5bb013af0`. Vendor firewall и guard active;
+в FORWARD hook `CLEANVPN_KS_FWD` стоит перед `ARMBIAN_USB_GADGET_FWD`.
+Native ready, NRestarts=0, failed units нет, admin HTTP 200, DNS TCP отвечает,
+HTTPS через tun0 подтверждает exit IP 84.201.14.124. Журнал сохранён как
+`final-psu-stock-b24d94dd.log`.
+
+После проверки удалена только requires-ссылка раннего rescue arm; daemon-reload
+подтвердил отсутствие этой зависимости у sysinit. Атомарно восстановлен исходный
+обычный `/boot/armbianEnv.txt`, cmp прошёл, SHA256
+`53e5815b86d14223d8857c2d38eaa9d7e0bd44c3a4690eb69f96e796284c7953`.
+Следующая загрузка обычная, автоматического возврата в rescue больше нет.
+Receipt: `ordinary-native-restored.txt`. Плата оставлена работающей от БП.
+
+Recovery helpers/target и условный usbmuxd generator сохранены для ручного
+аварийного доступа; при обычной загрузке они rescue не включают. Диагностический
+persistent journal и отключённый armbian-ramlog пока сохранены до проверки
+физического холодного запуска. Четыре обычных software reboot от отдельного БП
+прошли с постепенным возвратом штатных служб. Это поддерживает версию проблемы
+питания от Mac, но без измерений не доказывает её. Следующие проверки — холодный
+запуск полного стека и реальный USB-клиент, включая transparent-ветку combo;
+после этого можно убрать оставшиеся временные диагностические настройки.

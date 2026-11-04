@@ -48,8 +48,39 @@
         "usbSsh": "listening on 192.168.8.1 and USB IPv6LL",
         "ordinaryTargets": "basic and multi-user inactive",
         "failedUnits": 0,
-        "externalPowerBoot": "pending"
+        "externalPowerBoot": "passed: rescue cold boot 4c39b31d-df09-418b-ab12-bc0028d9c746 on separate PSU labelled 5V 3A"
       }
+    },
+    "externalPowerRecovery": {
+      "ordinarySoftwareBootIds": [
+        "40791a86-9327-45ae-807d-1a2198ef7c71",
+        "e83a46ab-1c78-4127-ad6d-0cc2b7e1ea14",
+        "43a30d10-22ab-441e-b3dd-2f8874963e86",
+        "b24d94dd-900c-442d-85ed-a8c5bb013af0"
+      ],
+      "finalBoot": {
+        "stockUsbGadget": "restored",
+        "vendorFirewall": "active; FORWARD guard hook precedes vendor hook",
+        "native": "active, ready, NRestarts=0",
+        "adminHttp": 200,
+        "failedUnits": 0,
+        "tunHttpsExternalIp": "84.201.14.124",
+        "nativeDnsTcp": "passed"
+      },
+      "precedingFullStackBootProbes": {
+        "nativeDnsUdpAndTcp": "passed",
+        "tunDownloadBytes": 1048576,
+        "tunUploadBytes": 262144,
+        "downloadHttp": 200,
+        "uploadHttp": 200,
+        "directHttpsBoundToIphethWithGuard": "blocked: timeout, HTTP 000"
+      },
+      "nextBoot": "ordinary; temporary rescue-arm requires link removed and daemon reloaded",
+      "bootEnvSha256": "53e5815b86d14223d8857c2d38eaa9d7e0bd44c3a4690eb69f96e796284c7953",
+      "remainingRecoveryArtifacts": "manual rescue target/helpers, rescue-only usbmuxd generator, persistent diagnostic journal and disabled armbian-ramlog retained",
+      "fullStackPhysicalColdBoot": "not yet tested",
+      "usbClientAndTransparentAfterRecovery": "not yet tested; latest traffic probes originate on board through TUN",
+      "rootCause": "unconfirmed; successful PSU boots support power hypothesis but no electrical measurements"
     }
   },
   "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]
