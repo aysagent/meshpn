@@ -1,6 +1,11 @@
 import net from 'node:net';
 import os from 'node:os';
-import {exact,need,ipv4Subnet} from './common.mjs';
+import fs from 'node:fs';
+import {exact,need,ipv4Subnet,atomic} from './common.mjs';
+
+// Root may deploy with umask 077; the unprivileged web user must still read
+// published code/config. Backups continue to use private atomic writes.
+export function publishManagementFile(file,value,mode=0o644){atomic(file,value,mode);fs.chmodSync(file,mode);}
 
 export function managementAccess(value) {
  if(value===undefined)return null;

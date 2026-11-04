@@ -6,10 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import net from 'node:net';
-import {managementAccess,managementAddresses,managementPeer,startManagementListeners} from '../lib/management-access.mjs';
+import {managementAccess,managementAddresses,managementPeer,startManagementListeners,publishManagementFile} from '../lib/management-access.mjs';
 import {createAdmin} from '../server.mjs';
 const access=managementAccess({interface:'enx123',subnet:'172.20.10.0/28'});
 const inventory=address=>({enx123:[{family:'IPv4',internal:false,address}]});
+test('root deployment with private umask publishes readable code and preserves explicit private modes',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mpn-publish-')),old=process.umask(0o077);
+ try{publishManagementFile(dir+'/code','code');assert.equal(fs.statSync(dir+'/code').mode&0o777,0o644);publishManagementFile(dir+'/private','private',0o600);assert.equal(fs.statSync(dir+'/private').mode&0o777,0o600);}finally{process.umask(old);fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('management scope requires an explicit private subnet and unprivileged distinct ports',()=>{
  assert.equal(managementAccess(undefined),null);
  for(const patch of [{interface:'usb0'},{interface:'lo'},{interface:'x\n'},{subnet:'0.0.0.0/0'},{subnet:'172.16.0.0/8'},{subnet:'8.8.8.0/24'},{port:80},{port:8080,capturePort:8080},{subnet:'172.20.10.0/28/evil'},{unexpected:true}])assert.throws(()=>managementAccess({...access,...patch}));

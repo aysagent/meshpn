@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {execFileSync} from 'node:child_process';
-import {managementAccess} from './lib/management-access.mjs';
+import {managementAccess,publishManagementFile as publish} from './lib/management-access.mjs';
 import {need,readJson,atomic} from './lib/common.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url)),etc='/etc/meshpn-admin',base='/opt/meshpn-admin';
@@ -42,15 +42,15 @@ let wasEnabled=false;try{wasEnabled=run('is-enabled',unit).trim()==='enabled';}c
 try{
  const next={...before};if(access)next.managementAccess=access;else delete next.managementAccess;
  if(access){
-  for(const relative of ['server.mjs','lib/management-access.mjs'])atomic(base+'/admin/'+relative,fs.readFileSync(root+'/'+relative,'utf8'),0o644);
-  atomic(unitPath,unitText,0o644);
+  for(const relative of ['server.mjs','lib/management-access.mjs'])publish(base+'/admin/'+relative,fs.readFileSync(root+'/'+relative,'utf8'));
+  publish(unitPath,unitText);
  }else if(fs.existsSync(unitPath)){run('disable','--now',unit);fs.unlinkSync(unitPath);}
- atomic(file,next,0o644);run('daemon-reload');
+ publish(file,next);run('daemon-reload');
  if(access)run('enable',unit);
  run('restart','meshpn-admin-web.service');
  if(access)run('start',unit);
  console.log(JSON.stringify({...plan,mode:'applied',backup,activation:'listeners follow eligible IPv4 addresses; inspect journal for bind failures'},null,2));
 }catch(e){
- try{if(!wasEnabled&&fs.existsSync(unitPath))run('disable','--now',unit);for(const s of snapshots){if(s.exists)atomic(s.path,s.text,s.mode);else if(fs.existsSync(s.path))fs.unlinkSync(s.path);}run('daemon-reload');if(wasEnabled)run('enable',unit);run('restart','meshpn-admin-web.service');if(wasEnabled)run('start',unit);}catch{console.error('management_rollback_failed: '+backup);}
+ try{if(!wasEnabled&&fs.existsSync(unitPath))run('disable','--now',unit);for(const s of snapshots){if(s.exists)publish(s.path,s.text,s.mode);else if(fs.existsSync(s.path))fs.unlinkSync(s.path);}run('daemon-reload');if(wasEnabled)run('enable',unit);run('restart','meshpn-admin-web.service');if(wasEnabled)run('start',unit);}catch{console.error('management_rollback_failed: '+backup);}
  throw e;
 }
