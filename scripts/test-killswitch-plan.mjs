@@ -175,6 +175,13 @@ test('USB mDNS admin prefix admits only the exact local publication rule',()=>{
  for(const altered of[prefix.replace('usb0','wlan0'),prefix.replace('5353','53'),prefix.replace('192.168.7.1/32','0.0.0.0/0'),prefix.replace('224.0.0.251/32','224.0.0.0/4')])assert.notEqual(audit(4,withRule(altered)).status,0);
 });
 
+test('management mDNS admits only explicit private source, interface and exact multicast DNS tuple',()=>{
+ const prefix='-A OUTPUT -s 172.20.10.3/32 -d 224.0.0.251/32 -o enx123 -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-management-mdns-v1 -j ACCEPT';
+ const base=activeSnapshot(4,true),withRule=p=>base.replace('-A OUTPUT ',p+'\n-A OUTPUT ');
+ assert.equal(audit(4,withRule(prefix)).status,0);
+ for(const altered of[prefix.replace('enx123','tun0'),prefix.replace('enx123','usb0'),prefix.replace('enx123','lo'),prefix.replace('enx123','eth+'),prefix.replace('172.20.10.3/32','8.8.8.8/32'),prefix.replace('172.20.10.3/32','172.020.10.3/32'),prefix.replace('172.20.10.3/32','172.20.10.3/24'),prefix.replace('224.0.0.251/32','224.0.0.0/4'),prefix.replace('--dport 5353','--dport 53'),prefix.replace('udp','tcp'),prefix+' -m conntrack --ctstate ESTABLISHED'])assert.notEqual(audit(4,withRule(altered)).status,0,altered);
+});
+
 test('DNS audit accepts one non-default native peer but refuses mixed or reserved sources',()=>{
   const sample=activeSnapshot(4);
   const replace=s=>s.replaceAll('10.99.0.2/32','10.99.0.37/32');
@@ -186,6 +193,6 @@ test('DNS audit accepts one non-default native peer but refuses mixed or reserve
 
 test('guard declares native peer DNS support without inspecting host state',()=>{
   const r=spawnSync('bash',[file,'capabilities'],{encoding:'utf8'});
-  assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true,usb_subnet:true});
+  assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true,usb_subnet:true,management_mdns:true});
   assert.notEqual(spawnSync('bash',[file,'capabilities','--scope=both'],{encoding:'utf8'}).status,0);
 });

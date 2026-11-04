@@ -9,14 +9,16 @@ export function publishManagementFile(file,value,mode=0o644){atomic(file,value,m
 
 export function managementAccess(value) {
  if(value===undefined)return null;
- exact(value,['interface','subnet','port','capturePort']);
+ exact(value,['interface','subnet','port','capturePort','mdns']);
+ need(value.mdns===undefined||typeof value.mdns==='boolean','management_mdns');
  need(typeof value.interface==='string'&&/^[a-zA-Z0-9_]{1,15}$/.test(value.interface)&&!['lo','usb0'].includes(value.interface),'management_interface');
  const [base,bits,...rest]=String(value.subnet).split('/');
  need(!rest.length&&net.isIPv4(base)&&/^(?:[1-9]|[12][0-9]|3[0-2])$/.test(bits),'management_subnet');
  const prefix=Number(bits);
  need([['10.0.0.0/8',8],['172.16.0.0/12',12],['192.168.0.0/16',16]].some(([range,min])=>prefix>=min&&ipv4Subnet(base,range)),'management_private_subnet_required');
  const result={...value,port:value.port??8080,capturePort:value.capturePort??18443};
- for(const p of [result.port,result.capturePort])need(Number.isInteger(p)&&p>=1024&&p<=65535,'management_port');
+ need(Number.isInteger(result.port)&&(result.port===80||result.port>=1024&&result.port<=65535),'management_port');
+ need(Number.isInteger(result.capturePort)&&result.capturePort>=1024&&result.capturePort<=65535,'management_port');
  need(result.port!==result.capturePort,'management_port_collision');
  return result;
 }

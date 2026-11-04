@@ -8,15 +8,17 @@ import http from 'node:http';
 import net from 'node:net';
 import {managementAccess,managementAddresses,managementPeer,startManagementListeners,publishManagementFile} from '../lib/management-access.mjs';
 import {createAdmin} from '../server.mjs';
+import {managementMdnsRule,parseManagementMdnsRule} from '../lib/management-mdns.mjs';
 const access=managementAccess({interface:'enx123',subnet:'172.20.10.0/28'});
 const inventory=address=>({enx123:[{family:'IPv4',internal:false,address}]});
 test('root deployment with private umask publishes readable code and preserves explicit private modes',()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mpn-publish-')),old=process.umask(0o077);
  try{publishManagementFile(dir+'/code','code');assert.equal(fs.statSync(dir+'/code').mode&0o777,0o644);publishManagementFile(dir+'/private','private',0o600);assert.equal(fs.statSync(dir+'/private').mode&0o777,0o600);}finally{process.umask(old);fs.rmSync(dir,{recursive:true,force:true});}
 });
-test('management scope requires an explicit private subnet and unprivileged distinct ports',()=>{
+test('management scope requires a private subnet, HTTP 80 or high ports, and distinct ports',()=>{
  assert.equal(managementAccess(undefined),null);
- for(const patch of [{interface:'usb0'},{interface:'lo'},{interface:'x\n'},{subnet:'0.0.0.0/0'},{subnet:'172.16.0.0/8'},{subnet:'8.8.8.0/24'},{port:80},{port:8080,capturePort:8080},{subnet:'172.20.10.0/28/evil'},{unexpected:true}])assert.throws(()=>managementAccess({...access,...patch}));
+ assert.equal(managementAccess({...access,port:80,mdns:true}).port,80);
+ for(const patch of [{interface:'usb0'},{interface:'lo'},{interface:'x\n'},{subnet:'0.0.0.0/0'},{subnet:'172.16.0.0/8'},{subnet:'8.8.8.0/24'},{port:22},{port:8080,capturePort:8080},{subnet:'172.20.10.0/28/evil'},{unexpected:true}])assert.throws(()=>managementAccess({...access,...patch}));
  const socket={localAddress:'172.20.10.3',localPort:8080,remoteAddress:'172.20.10.2'};
  assert(managementPeer(access,socket,inventory('172.20.10.3')));
  for(const patch of [{localAddress:'192.168.8.1'},{remoteAddress:'172.20.10.20'},{remoteAddress:'::ffff:172.20.10.2'},{localPort:80}])assert(!managementPeer(access,{...socket,...patch},inventory('172.20.10.3')));
@@ -42,6 +44,7 @@ test('management HTTP retains authentication, host/origin and shared password/se
  front.listen(0,'127.0.0.1');await once(front,'listening');t.after(()=>{front.close();app.close();});
  const request=(url,{host='172.20.10.3:8080',origin='http://172.20.10.3:8080',data,cookie,csrf}={})=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port:front.address().port,path:url,method:data?'POST':'GET',agent:false,headers:{host,origin,...(data?{'content-type':'application/json'}:{}),...(cookie?{cookie}:{}),...(csrf?{'x-csrf-token':csrf}:{})}},res=>{let body='';res.on('data',b=>body+=b);res.on('end',()=>resolve({status:res.statusCode,body,headers:res.headers}));});req.on('error',reject);req.end(data?JSON.stringify(data):undefined);});
  assert.equal((await request('/')).status,200);
+ assert.equal((await request('/',{host:'mpn.local:8080'})).status,200);
  assert.equal((await request('/api/settings')).status,401);
  assert.equal((await request('/',{host:'evil.example'})).status,403);
  assert.equal((await request('/api/login',{data:{password:'admin'},origin:'http://evil.example'})).status,403);
@@ -56,4 +59,9 @@ test('management HTTP retains authentication, host/origin and shared password/se
  const {X509Certificate}=await import('node:crypto');assert(new X509Certificate(fs.readFileSync(state+'/capture.pem')).checkIP('172.20.10.3'));
  assert.equal((await request('/api/capture/stop',{cookie,csrf,data:{}})).status,200);
  peer='172.20.10.20';assert.equal((await request('/')).status,403);
+});
+test('mDNS cleanup recognizes only the exact owned private-address rule',()=>{
+ const rule=managementMdnsRule('enx123','172.20.10.3'),line='-A OUTPUT '+rule.join(' ');
+ assert.deepEqual(parseManagementMdnsRule(line),rule);
+ for(const changed of [line.replace('/32','/24'),line.replace('172.20.10.3','8.8.8.8'),line.replace('enx123','usb0'),line.replace('5353','53'),line.replace('224.0.0.251','224.0.0.252'),line+' -m conntrack --ctstate ESTABLISHED'])assert.equal(parseManagementMdnsRule(changed),null);
 });

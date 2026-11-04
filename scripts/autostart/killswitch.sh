@@ -35,7 +35,7 @@ for arg in "$@"; do
 done
 if [[ "$ACTION" == capabilities ]]; then
   [[ ${#seen[@]} == 0 ]] || die 'capabilities takes no arguments'
-  printf '%s\n' '{"schema":1,"native_peer_dns":true,"usb_subnet":true}'
+  printf '%s\n' '{"schema":1,"native_peer_dns":true,"usb_subnet":true,"management_mdns":true}'
   exit 0
 fi
 case "$ACTION" in up|down|status|plan|audit-snapshot) ;; *) die 'usage: killswitch.sh up|down|status|plan [options]; audit-snapshot --family=4|6 < filter-S.txt' ;; esac
@@ -208,6 +208,14 @@ safe_prefix_rule() {
   # USB administration may publish one IPv4 mDNS alias. Match the entire
   # rule, never trust a comment, wildcard interface or broad multicast range.
   if [[ "$family" == 4 && "$base" == OUTPUT && "$line" == "-A OUTPUT -s $usb_address/32 -d 224.0.0.251/32 -o usb0 -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-usb-mdns-v1 -j ACCEPT" ]]; then return 0; fi
+  local mdns_pattern='^-A OUTPUT -s ([0-9]+)\.([0-9]+)\.([0-9]+)\.([0-9]+)/32 -d 224\.0\.0\.251/32 -o ([a-zA-Z0-9_]{1,15}) -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-management-mdns-v1 -j ACCEPT$'
+  if [[ "$family" == 4 && "$base" == OUTPUT && "$line" =~ $mdns_pattern ]]; then
+    local a="${BASH_REMATCH[1]}" b="${BASH_REMATCH[2]}" c="${BASH_REMATCH[3]}" d="${BASH_REMATCH[4]}" iface="${BASH_REMATCH[5]}" octet
+    [[ "$iface" != lo && "$iface" != usb0 && "$iface" != "$tun" ]] || return 1
+    for octet in "$a" "$b" "$c" "$d"; do [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] && (( octet <= 255 )) || return 1; done
+    (( a == 10 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) )) && return 0
+    return 1
+  fi
   local dns_tag=' --comment (clean-vpn-dns-tunnel(-[a-f0-9]{24})?) '
   if [[ "$line" =~ $dns_tag ]]; then
     tag="${BASH_REMATCH[1]}"

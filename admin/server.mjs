@@ -22,7 +22,7 @@ export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSoc
  const cookie=sid=>`mpn_session=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`;
  const publicPort=c.publicPort??c.port,publicAddress=c.publicAddress??c.address;
  const isManagement=req=>managementPeer(management,req.socket,interfaces?.());
- const acceptedHosts=req=>isManagement(req)?[req.socket.localAddress+':'+management.port]:[currentHostname+'.local',publicAddress].flatMap(h=>publicPort===80?[h,h+':80']:[h+':'+publicPort]);
+ const acceptedHosts=req=>{const lan=isManagement(req),port=lan?management.port:publicPort;return[currentHostname+'.local',lan?req.socket.localAddress:publicAddress].flatMap(h=>port===80?[h,h+':80']:[h+':'+port]);};
  const allowed=req=>c.lab===true||c.loopbackProxy===true?req.socket.remoteAddress==='127.0.0.1':(req.socket.localAddress===c.address&&ipv4Subnet(req.socket.remoteAddress,c.subnet))||isManagement(req);
  const closeCapture=async()=>{clearTimeout(captureTimer);if(capture){captureView=capture.snapshot();await capture.close();capture=null;}return{status:'stopped',capture:captureView};};
  const captureFront=net.createServer(client=>{if(!allowed({socket:client})||!capture){client.destroy();return;}const dest=new URL(capture.url),upstream=net.connect(Number(dest.port),'127.0.0.1');client.setTimeout(12000,()=>client.destroy());upstream.setTimeout(12000,()=>upstream.destroy());for(const s of [client,upstream]){s.on('error',()=>{client.destroy();upstream.destroy();});s.on('close',()=>{client.destroy();upstream.destroy();});}client.pipe(upstream);upstream.pipe(client);});captureFront.maxConnections=8;
@@ -48,7 +48,7 @@ export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSoc
  if(req.url==='/api/capture'){need(!mutation,'method',405);send(res,200,{active:!!capture,bundle:capture?.snapshot()??captureView});return;}
  if(req.url==='/api/capture/stop'){need(mutation,'method',405);send(res,200,await closeCapture());return;}
  if(req.url==='/api/capture/start'){
- need(mutation,'method',405);exact(p,['browser','version','platform','architecture','extensionOrder','echMode','padding']);need(!capture,'capture_busy',409);const certificateName=isManagement(req)?req.socket.localAddress:(c.captureHostname??currentHostname+'.local');const authority=certificateName+':'+(isManagement(req)?management.capturePort:(c.publicCapturePort??c.capturePort));
+ need(mutation,'method',405);exact(p,['browser','version','platform','architecture','extensionOrder','echMode','padding']);need(!capture,'capture_busy',409);const certificateName=isManagement(req)?(req.headers.host.split(':')[0]===currentHostname+'.local'?currentHostname+'.local':req.socket.localAddress):(c.captureHostname??currentHostname+'.local');const authority=certificateName+':'+(isManagement(req)?management.capturePort:(c.publicCapturePort??c.capturePort));
  const metadata={schema:1,id:'browser-'+Date.now().toString(36),identity:{browser:p.browser,version:p.version,platform:p.platform,architecture:p.architecture,versionSource:'operator-declared'},context:{scenario:'cold',isolation:'operator-declared',certificateValidation:'enabled',http:'h2',proxy:'none',extensionOrder:p.extensionOrder,echMode:p.echMode,padding:p.padding}};
  const cert=c.state+'/capture.pem',key=c.state+'/capture.key';
  let renew=true;try{renew=Date.parse(new X509Certificate(fs.readFileSync(cert)).validTo)<Date.now()+86400000||readJson(c.state+'/capture-name.json',null)?.name!==certificateName;}catch{}
