@@ -121,5 +121,13 @@
       "rootCause": "unconfirmed; successful PSU cold boot and repeated loss on Mac support power/USB-path hypothesis but no electrical measurements"
     }
   },
-  "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]
+  "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"],
+  "latestFollowup": {
+    "date": "2026-11-05",
+    "report": "clean-vpn-native-usb-acceptance-20261105.json",
+    "usbAfterRecovery": "passed: process-bound Mac USB smoke; six relay fingerprints preserved",
+    "admin": "startup socket retry and IPv4 USB alias NSEC installed",
+    "recoveryLogging": "original ramlog restored; temporary journald override removed",
+    "next": "next natural boot; iphone0 reappearance and iPhone browser acceptance"
+  }
 }

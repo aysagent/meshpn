@@ -662,3 +662,68 @@ USB-адрес 192.168.8.1. Ранее известная задержка mDNS 
 Матрица с iphone0 завершена: 38/38 настоящих netns/TUN/DNS/routes/NAT проверок,
 без пропусков. Логи `/root/cvpn-iphone-unit.log` и `/root/cvpn-iphone-netns.log`.
 При финальной проверке оба PID прежние, NRestarts=0, failed units нет.
+
+### Следующие пункты приняты — USB smoke, admin startup, mDNS (5 ноября)
+
+После очередного включения пользователем boot
+`8635d7f6-385a-4e8e-9b0a-40c87d93086b`: A7Z выдала Mac адрес 192.168.8.31,
+router/DNS 192.168.8.1. Native combo сам поднялся, PID 2219/NRestarts=0.
+Owner PID 1181 один раз повторил старт до появления default route. В этом
+прогоне uplink — wlan0; iPhone по USB отсутствовал. Management listener ждёт
+iphone0, доступ на wlan0 автоматически не открывается.
+
+[USB smoke](clean-vpn-usb-smoke.md) выполняется на Mac с привязкой только
+сокетов процесса к en20, без изменения его сети. Финальный прогон: 9 DNS
+проверок, включая A/AAAA UDP/TCP, и 8 HTTP(S) запросов прошли. HTTP и HTTPS
+api.ipify.org вернули 84.201.14.124. HTTPS example.org/Speedtest — 200,
+Яндекс — 302; download 1 MiB и upload 256 KiB завершились с проверкой объёмов.
+Первоначальный HTTP neverssl.com дал timeout; это не принималось за успех,
+итоговый HTTP smoke использует example.org. Браузерные redirects/Speedtest
+и iPhone этим прогоном не проверены.
+
+Две независимые tcpdump-записи USB и wlan0 содержат по шесть ClientHello:
+JA3/JA4/ALPN исходных запросов и transparent relay совпали. Packet TLS сессия
+существовала до начала записи и не переподключалась: её профиль заново здесь
+не измерен. Проверка отпечатков использует общий parser проекта, не является
+независимой реализацией JA3/JA4. Pcap оставлены только на плате, SNI в отчёт
+не включены. [Машиночитаемая приёмка](../fixtures/clean-vpn-native-usb-acceptance-20261105.json).
+
+На раннем boot web один раз завершился до готовности backend socket. Добавлен
+ограниченный startup retry только для первого read-only `/settings` при
+ENOENT/ECONNREFUSED, без повторов мутаций/ошибок конфигурации. Проверен реальный
+задержанный Unix-сокет в тесте и совместный restart broker/web на плате:
+оба active/NRestarts=0. Новый физический boot после изменения не выполнялся.
+
+USB mDNS capture установил причину задержки: A приходит сразу, AAAA остаётся
+без ответа. Helper теперь отвечает NSEC об отсутствии AAAA только для своего
+IPv4 USB alias после Avahi establishment, с ограничением частоты и интерфейса.
+Проверены отдельные временные имена, затем mpn-cubie.local: DNS lookup
+2.460035 → 0.351783 s, HTTP 200; NSEC виден в pcap. IP-доступ также HTTP 200.
+Изменение общее для установок с этим helper, не зашито под A7Z; на Zero ещё
+не развёрнуто. Dual-stack management mDNS пока без этого дополнения.
+
+Изменения доставлены Git pull, собраны cc -Wall -Wextra -Werror. На A7Z
+93/93 admin tests прошли. На Mac 91/93: два native-binding теста не смогли
+найти Linux tun-helper; оба затем прошли на A7Z. Перед заменой admin файлов
+сохранён backup и включён rollback timer на 180 s; после успешной проверки
+таймер отменён. VPN/owner не перезапускались, их PID сохранены, guard обеих
+семей включён. Старые Zero/VPS не менялись.
+
+После принятия USB-трафика восстановлен исходный `/etc/default/armbian-ramlog`
+из before.tar (перед записью проверено, что отличается только ENABLED).
+Штатный ramlog активирован: /var/log — tmpfs, /var/log.hdd — bind исходного
+каталога, persistent journal сохранён через ссылку. Удалён только собственный
+временный journald override с sync каждую секунду; journald перезапущен.
+Резервные копии и ручные rescue helpers сохранены и не включают rescue при
+обычной загрузке. Boot env SHA256 прежний. Failed units нет; статусы timeout
+временных capture/helper units очищены адресно. После cleanup USB smoke снова
+прошёл. Все материалы: `/root/cvpn-usb-followup-20261105/`.
+
+Ближайшие оставшиеся проверки:
+
+1. При следующем обычном включении проверить web без раннего restart и
+   штатный ramlog после возврата исходных настроек.
+2. Когда iPhone снова подключён к host USB: iphone0/DHCP, смена uplink и
+   management HTTP/mDNS; этот прогон выполнялся с Wi-Fi uplink.
+3. Отдельная браузерная проверка с USB iPhone, включая полный download/upload
+   Speedtest. Успешный curl smoke её не заменяет.

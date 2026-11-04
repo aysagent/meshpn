@@ -1,0 +1,293 @@
+{
+  "schema": 1,
+  "kind": "clean-vpn-usb-followup-acceptance",
+  "date": "2026-11-05 Europe/Istanbul",
+  "bootId": "8635d7f6-385a-4e8e-9b0a-40c87d93086b",
+  "transport": "combo-tls",
+  "smoke": {
+    "schema": 1,
+    "kind": "clean-vpn-usb-smoke",
+    "timestamp": "2026-11-04T21:45:47.073Z",
+    "interface": "en20",
+    "source": "192.168.8.31",
+    "gateway": "192.168.8.1",
+    "expected-exit": "84.201.14.124",
+    "systemNetworkChanged": false,
+    "tlsValidation": true,
+    "browserAcceptance": false,
+    "dns": [
+      {
+        "host": "example.org",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "104.20.26.136",
+          "172.66.157.237"
+        ]
+      },
+      {
+        "host": "example.org",
+        "type": "A",
+        "transport": "tcp",
+        "addresses": [
+          "104.20.26.136",
+          "172.66.157.237"
+        ]
+      },
+      {
+        "host": "example.org",
+        "type": "AAAA",
+        "transport": "udp",
+        "addresses": [
+          "2606:4700:10::ac42:9ded",
+          "2606:4700:10::6814:1a88"
+        ]
+      },
+      {
+        "host": "example.org",
+        "type": "AAAA",
+        "transport": "tcp",
+        "addresses": [
+          "2606:4700:10::6814:1a88",
+          "2606:4700:10::ac42:9ded"
+        ]
+      },
+      {
+        "host": "example.org",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "104.20.26.136",
+          "172.66.157.237"
+        ]
+      },
+      {
+        "host": "internet.yandex.ru",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "213.180.204.242"
+        ]
+      },
+      {
+        "host": "www.speedtest.net",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "104.17.148.22",
+          "104.17.147.22"
+        ]
+      },
+      {
+        "host": "api.ipify.org",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "172.67.74.152",
+          "104.26.13.205",
+          "104.26.12.205"
+        ]
+      },
+      {
+        "host": "speed.cloudflare.com",
+        "type": "A",
+        "transport": "udp",
+        "addresses": [
+          "172.66.0.218",
+          "162.159.140.220"
+        ]
+      }
+    ],
+    "requests": [
+      {
+        "url": "http://example.org/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "104.20.26.136",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "104.20.26.136",
+            "seconds": 0.170066,
+            "downloadBytes": 577,
+            "uploadBytes": 0
+          }
+        ]
+      },
+      {
+        "url": "https://example.org/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "104.20.26.136",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "104.20.26.136",
+            "seconds": 0.343174,
+            "downloadBytes": 577,
+            "uploadBytes": 0
+          }
+        ]
+      },
+      {
+        "url": "https://internet.yandex.ru/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "213.180.204.242",
+            "passed": true,
+            "status": 302,
+            "local": "192.168.8.31",
+            "remote": "213.180.204.242",
+            "seconds": 0.405818,
+            "downloadBytes": 49,
+            "uploadBytes": 0
+          }
+        ]
+      },
+      {
+        "url": "https://www.speedtest.net/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "104.17.148.22",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "104.17.148.22",
+            "seconds": 0.943297,
+            "downloadBytes": 206489,
+            "uploadBytes": 0
+          }
+        ]
+      },
+      {
+        "url": "http://api.ipify.org/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "172.67.74.152",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "172.67.74.152",
+            "seconds": 0.289908,
+            "downloadBytes": 13,
+            "uploadBytes": 0,
+            "observedExit": "84.201.14.124"
+          }
+        ]
+      },
+      {
+        "url": "https://api.ipify.org/",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "172.67.74.152",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "172.67.74.152",
+            "seconds": 0.390409,
+            "downloadBytes": 13,
+            "uploadBytes": 0,
+            "observedExit": "84.201.14.124"
+          }
+        ]
+      },
+      {
+        "url": "https://speed.cloudflare.com/__down?bytes=1048576",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "172.66.0.218",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "172.66.0.218",
+            "seconds": 1.01804,
+            "downloadBytes": 1048576,
+            "uploadBytes": 0
+          }
+        ]
+      },
+      {
+        "url": "https://speed.cloudflare.com/__up",
+        "passed": true,
+        "attempts": [
+          {
+            "address": "172.66.0.218",
+            "passed": true,
+            "status": 200,
+            "local": "192.168.8.31",
+            "remote": "172.66.0.218",
+            "seconds": 0.883232,
+            "downloadBytes": 0,
+            "uploadBytes": 262144
+          }
+        ]
+      }
+    ],
+    "status": "passed"
+  },
+  "observer": {
+    "usbPcapSha256": "d2c4aa580c2906ca9140cdbcdde07e4696cee32e1fa5e0232844022c6beb235f",
+    "wanPcapSha256": "c107be92f245079c608712f9d7b0ca4b8dbcc213ffc01b8879e731c51f89ce84",
+    "usbClientHelloCount": 6,
+    "wanClientHelloCount": 6,
+    "allFingerprintsEqual": true,
+    "fingerprint": {
+      "ja3": "375c6162a492dfbf2795909110ce8424",
+      "ja4": "t13d4907h2_0d8feac7bc37_7395dae3b2f3",
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ]
+    },
+    "limitations": [
+      "ethernet-ipv4-tcp-only",
+      "first-clienthello-only-no-HRR",
+      "requires-captured-SYN",
+      "prefix-limit-64KiB",
+      "no-checksum-verification",
+      "no-capture-drop-proof",
+      "shared-JA3-JA4-parser-with-project-sniffer-not-independent-algorithm",
+      "no-browser-equivalence-or-leak-verdict"
+    ]
+  },
+  "admin": {
+    "linuxTestsPassed": 93,
+    "linuxTestsTotal": 93,
+    "usbIpHttp": 200,
+    "usbNameHttp": 200,
+    "name": "mpn-cubie.local",
+    "nameLookupBeforeSeconds": 2.460035,
+    "nameLookupAfterSeconds": 0.351783,
+    "negativeAaaaPcap": true,
+    "webRestartsAfterUpdate": 0,
+    "brokerRestartsAfterUpdate": 0
+  },
+  "vpn": {
+    "pidBeforeAndAfter": 2219,
+    "restarts": 0,
+    "networkOwnerPid": 1181,
+    "networkOwnerBootRetries": 1,
+    "guard": "cvks5 both block",
+    "port": 443
+  },
+  "cleanup": {
+    "ramlog": "original configuration restored and active",
+    "journalRecoveryOverride": "removed with backup",
+    "manualRescue": "retained, inactive",
+    "failedUnits": 0
+  },
+  "limitations": [
+    "No iPhone browser or full browser Speedtest acceptance",
+    "No new cold boot after this admin update",
+    "iPhone USB uplink absent: management LAN listener waits for iphone0",
+    "Current capture contains relay handshakes; existing packet TLS session was not reconnected",
+    "No host network settings changed on Mac; previous Zero/VPS pair untouched"
+  ]
+}
