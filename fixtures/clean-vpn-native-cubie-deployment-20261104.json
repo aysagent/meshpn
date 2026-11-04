@@ -41,7 +41,15 @@
       "usbAdminRestored": "HTTP 200 from board and Mac; broker/web/socket restored, VPN still masked",
       "iphoneUsbUplink": "passed after phone enumeration: ipheth DHCP 172.20.10.3/28, gateway/DNS 172.20.10.1, DNS answer and interface-bound HTTPS 200",
       "iphonePathSsh": "passed from Mac to 172.20.10.3 with original host key; no Mac network changes",
-      "clockAfterIphoneUplink": "NTP synchronized"
+      "clockAfterIphoneUplink": "NTP synchronized in previous staged boot; minimal rescue does not start NTP",
+      "minimalIphoneAutostart": {
+        "bootId": "3494755a-6f4a-4616-b6fa-8e7ca611a01f",
+        "ssh": "independent login via 172.20.10.3 passed after rescue reboot without manual service starts",
+        "usbSsh": "listening on 192.168.8.1 and USB IPv6LL",
+        "ordinaryTargets": "basic and multi-user inactive",
+        "failedUnits": 0,
+        "externalPowerBoot": "pending"
+      }
     }
   },
   "limitations": ["bounded acceptance, not long soak", "curl USB requests, not an iPhone browser test", "first ClientHello comparison, not full browser equivalence", "systemd reboot, not physical power removal", "auto uplink currently requires one main IPv4 default"]

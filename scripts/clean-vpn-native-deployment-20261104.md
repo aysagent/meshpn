@@ -343,3 +343,38 @@ USB `192.168.8.1` и iPhone uplink `172.20.10.3`. Маршруты/настро�
 VPN остаётся masked, rescue boot остаётся выбранным. Обычный cold boot всё ещё
 не принят. Запрошена доступность отдельного источника 5 В / 3 А для проверки
 версии питания; команда на переключение питания или новую перезагрузку не дана.
+
+### Подготовлен iPhone SSH при минимальной загрузке
+
+Пользователь подтвердил отдельный QC/PD адаптер с выходом 5 В / 3 А и снова
+включил UFS от Mac. Boot `5fc64327-0781-42e3-8129-3af699bb69ae` успешно
+поднял прежний rescue. Для доступа после отключения USB от Mac добавлены:
+
+- `usbmuxd.service.d/90-clean-vpn-ufs-recovery.conf`: временно
+  DefaultDependencies=no, требует remount-fs и udevd; сохраняет исходный
+  ExecStart с `--user usbmux --systemd`. Не подтягивает basic/sysinit ради модема.
+- `clean-vpn-ufs-rescue-iphone.service` и helper `...-iphone-prepare`:
+  modprobe ipheth и udev coldplug только Apple USB devices.
+- `clean-vpn-ufs-rescue-iphone-ssh.service` и helper `...-iphone-ssh`:
+  ждёт IPv4 на интерфейсе с driver=ipheth и запускает отдельный sshd только
+  на полученном адресе. Исходные sshd_config/PAM/парольная политика сохранены.
+  USB SSH продолжает работать отдельной прежней службой.
+- `clean-vpn-ufs-rescue.target.d/20-iphone-access.conf`: Wants новой SSH-службы;
+  отсутствие телефона не блокирует основной USB rescue.
+
+Пройдены bash -n, sshd -t, systemd-analyze verify. До перезагрузки SSH через
+iPhone прошёл при inactive basic/multi-user. После контрольной перезагрузки
+**rescue режима** получен новый boot `3494755a-6f4a-4616-b6fa-8e7ca611a01f`:
+UFS root, обе SSH-службы, ipheth DHCP `172.20.10.3`, usbmuxd активны автоматически;
+новый вход через iPhone с исходным host key прошёл без ручного старта служб.
+basic/multi-user остаются inactive, failed units нет. Команда reboot вернула
+ошибку соединения с bus; фактическую перезагрузку подтверждает новый boot ID.
+
+Boot env не изменён, SHA256 по-прежнему `960920cf...600149`.
+Исходный target сохранён в `iphone-access-before/` в recovery directory.
+Копия шести новых конфигурационных файлов без секретов на Mac:
+`/private/tmp/cvpn-a7z-minimal-iphone-config.tar.gz`.
+Для завершения восстановления удалить эти временные units/helpers/drop-ins,
+включая usbmuxd drop-in; обычный ipheth .network сохранить.
+Следующий физический шаг — штатное выключение и запуск от отдельного БП,
+с iPhone через тот же хаб. Это ещё не проверка обычного cold boot или VPN.
