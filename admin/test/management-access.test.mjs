@@ -1,0 +1,55 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {EventEmitter,once} from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import http from 'node:http';
+import net from 'node:net';
+import {managementAccess,managementAddresses,managementPeer,startManagementListeners} from '../lib/management-access.mjs';
+import {createAdmin} from '../server.mjs';
+const access=managementAccess({interface:'enx123',subnet:'172.20.10.0/28'});
+const inventory=address=>({enx123:[{family:'IPv4',internal:false,address}]});
+test('management scope requires an explicit private subnet and unprivileged distinct ports',()=>{
+ assert.equal(managementAccess(undefined),null);
+ for(const patch of [{interface:'usb0'},{interface:'lo'},{interface:'x\n'},{subnet:'0.0.0.0/0'},{subnet:'172.16.0.0/8'},{subnet:'8.8.8.0/24'},{port:80},{port:8080,capturePort:8080},{subnet:'172.20.10.0/28/evil'},{unexpected:true}])assert.throws(()=>managementAccess({...access,...patch}));
+ const socket={localAddress:'172.20.10.3',localPort:8080,remoteAddress:'172.20.10.2'};
+ assert(managementPeer(access,socket,inventory('172.20.10.3')));
+ for(const patch of [{localAddress:'192.168.8.1'},{remoteAddress:'172.20.10.20'},{remoteAddress:'::ffff:172.20.10.2'},{localPort:80}])assert(!managementPeer(access,{...socket,...patch},inventory('172.20.10.3')));
+ assert(!managementPeer(access,socket,{}));
+ assert.deepEqual(managementAddresses(access,inventory('8.8.8.8')),[]);
+});
+test('listeners follow DHCP, close existing connections on address loss, and retry bind failures',()=>{
+ let addresses={},created=[],events=[];
+ const server=new EventEmitter(),captureFront=new EventEmitter();let forwarded=0;server.on('connection',()=>forwarded++);
+ const manager=startManagementListeners(access,{server,captureFront},{interfaces:()=>addresses,report:e=>events.push(e),createServer:accept=>{
+  const listener=new EventEmitter();listener.listen=(port,address,cb)=>{listener.port=port;listener.address=address;cb();};listener.close=cb=>{listener.closed=true;cb?.();};listener.accept=accept;created.push(listener);return listener;
+ }});
+ assert.equal(created.length,0);addresses=inventory('172.20.10.3');manager.reconcile();assert.equal(created.length,2);
+ const socket=new EventEmitter();Object.assign(socket,{localAddress:'172.20.10.3',localPort:8080,remoteAddress:'172.20.10.2',destroy(){this.destroyed=true;this.emit('close');}});created[0].accept(socket);assert.equal(forwarded,1);
+ addresses={};manager.reconcile();assert(socket.destroyed);assert(created.every(s=>s.closed));
+ addresses=inventory('172.20.10.4');manager.reconcile();assert.equal(created.length,4);created[2].emit('error',Error('EADDRINUSE'));manager.reconcile();assert.equal(created.length,5);assert.equal(events.filter(e=>e.state==='unavailable').length,1);
+ manager.close();manager.reconcile();assert(created.every(s=>s.closed));
+});
+test('management HTTP retains authentication, host/origin and shared password/session checks',async t=>{
+ const state=fs.mkdtempSync(path.join(os.tmpdir(),'mpn-management-'));t.after(()=>fs.rmSync(state,{recursive:true,force:true}));
+ const app=await createAdmin({address:'192.168.8.1',subnet:'192.168.8.0/24',port:80,capturePort:8443,state,managementAccess:access},{rpc:async()=>({hostname:'mpn'}),interfaces:()=>inventory('172.20.10.3')});
+ let peer='172.20.10.2';const front=net.createServer(socket=>{for(const [k,v]of Object.entries({localAddress:'172.20.10.3',localPort:8080,remoteAddress:peer}))Object.defineProperty(socket,k,{value:v});app.server.emit('connection',socket);});
+ front.listen(0,'127.0.0.1');await once(front,'listening');t.after(()=>{front.close();app.close();});
+ const request=(url,{host='172.20.10.3:8080',origin='http://172.20.10.3:8080',data,cookie,csrf}={})=>new Promise((resolve,reject)=>{const req=http.request({host:'127.0.0.1',port:front.address().port,path:url,method:data?'POST':'GET',agent:false,headers:{host,origin,...(data?{'content-type':'application/json'}:{}),...(cookie?{cookie}:{}),...(csrf?{'x-csrf-token':csrf}:{})}},res=>{let body='';res.on('data',b=>body+=b);res.on('end',()=>resolve({status:res.statusCode,body,headers:res.headers}));});req.on('error',reject);req.end(data?JSON.stringify(data):undefined);});
+ assert.equal((await request('/')).status,200);
+ assert.equal((await request('/api/settings')).status,401);
+ assert.equal((await request('/',{host:'evil.example'})).status,403);
+ assert.equal((await request('/api/login',{data:{password:'admin'},origin:'http://evil.example'})).status,403);
+ let login=await request('/api/login',{data:{password:'admin'}});assert.equal(login.status,200);let cookie=login.headers['set-cookie'][0].split(';')[0],csrf=JSON.parse(login.body).csrf;
+ assert.equal((await request('/api/settings',{cookie})).status,200);
+ assert.equal((await request('/api/password',{cookie,data:{oldPassword:'admin',newPassword:'test-new-password'}})).status,403);
+ assert.equal((await request('/api/password',{cookie,csrf,data:{oldPassword:'admin',newPassword:'test-new-password'}})).status,200);
+ assert.equal((await request('/api/settings',{cookie})).status,401);
+ login=await request('/api/login',{data:{password:'test-new-password'}});cookie=login.headers['set-cookie'][0].split(';')[0];csrf=JSON.parse(login.body).csrf;
+ const capture=await request('/api/capture/start',{cookie,csrf,data:{browser:'chromium',version:'156',platform:'linux',architecture:'x86_64',extensionOrder:'permuted',echMode:'disabled',padding:'optional'}});
+ assert.equal(capture.status,200,capture.body);assert.match(JSON.parse(capture.body).url,/^https:\/\/172\.20\.10\.3:18443\/capture\/[a-f0-9]+$/);
+ const {X509Certificate}=await import('node:crypto');assert(new X509Certificate(fs.readFileSync(state+'/capture.pem')).checkIP('172.20.10.3'));
+ assert.equal((await request('/api/capture/stop',{cookie,csrf,data:{}})).status,200);
+ peer='172.20.10.20';assert.equal((await request('/')).status,403);
+});

@@ -62,11 +62,12 @@ if(process.argv[2]==='--update'){
  atomic(captivePath,captiveUnit(),0o644);run('/usr/bin/systemctl',['daemon-reload']);
  const unitTexts=Object.fromEntries([captiveUnitName,'meshpn-admin-broker.service','meshpn-admin-web.service','meshpn-admin.socket'].map(u=>[u,fs.readFileSync('/etc/systemd/system/'+u,'utf8')]));
  atomic(etc+'/manifest.json',{...manifest,unitTexts,sourceCommit:run('git',['-C',root,'rev-parse','HEAD']),updatedAt:new Date().toISOString()});
- run('/usr/bin/systemctl',['start','meshpn-admin-broker.service','meshpn-admin.socket']);run('/usr/bin/systemctl',['enable','--now',captiveUnitName]);console.log('ADMIN_UPDATED');process.exit(0);
+ run('/usr/bin/systemctl',['start','meshpn-admin-broker.service','meshpn-admin.socket']);run('/usr/bin/systemctl',['enable','--now',captiveUnitName]);if(readJson(etc+'/web.json').managementAccess)run('/usr/bin/systemctl',['start','meshpn-admin-management.service']);console.log('ADMIN_UPDATED');process.exit(0);
 }
 if(['--container','--standalone','--update'].includes(process.argv[2])){
  const manifest=readJson(etc+'/manifest.json');need(manifest.kind==='meshpn-admin-owned-install','install_manifest');
  const dir='/etc/systemd/system/meshpn-admin-web.service.d',file=dir+'/container.conf';
+ if(process.argv[2]==='--container')need(!readJson(etc+'/web.json').managementAccess,'disable_management_access_before_container');
  run('/usr/bin/systemctl',['stop','meshpn-admin-web.service']);
  if(process.argv[2]==='--container'){need(!fs.existsSync(file),'mode_collision');fs.mkdirSync(dir,{recursive:true});atomic(file,'# meshpn-admin-owned-container-v1\n[Service]\nExecStart=\nExecStart='+base+'/node '+base+'/admin/socket-proxy.mjs\n',0o644);}
  else if(fs.existsSync(file)){need(fs.readFileSync(file,'utf8').startsWith('# meshpn-admin-owned-container-v1\n'),'mode_changed');fs.unlinkSync(file);}
@@ -78,6 +79,7 @@ if(process.argv[2]==='--remove'){
  // Validate every existing unit before stopping anything, including partial
  // installs. Missing publications are expected after interrupted cleanup.
  for(const u of units){const p='/etc/systemd/system/'+u;if(!fs.existsSync(p))continue;const text=fs.readFileSync(p,'utf8');need(manifest.unitTexts?.[u]?text===manifest.unitTexts[u]:text.startsWith('# meshpn-admin-owned-v1\n'),'unit_changed');}
+ if(fs.existsSync('/etc/systemd/system/meshpn-admin-management.service')||readJson(etc+'/web.json',{}).managementAccess)run(process.execPath,[root+'/admin/management-access.mjs','disable','--apply']);
  if(fs.existsSync(captivePath)){need(fs.readFileSync(captivePath,'utf8')===captiveUnit(),'captive_unit_changed');run('/usr/bin/systemctl',['disable','--now',captiveUnitName]);}
  for(const u of ['meshpn-admin.socket','meshpn-admin-web.service','meshpn-admin-broker.service'])if(fs.existsSync('/etc/systemd/system/'+u))run('/usr/bin/systemctl',['stop',u]);
  for(const u of ['meshpn-admin.socket','meshpn-admin-broker.service'])if(fs.existsSync('/etc/systemd/system/'+u))run('/usr/bin/systemctl',['disable',u]);

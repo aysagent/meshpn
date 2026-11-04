@@ -1,0 +1,56 @@
+#!/usr/bin/env node
+// Opt-in private LAN access for an existing standalone admin installation.
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {execFileSync} from 'node:child_process';
+import {managementAccess} from './lib/management-access.mjs';
+import {need,readJson,atomic} from './lib/common.mjs';
+
+const root=path.dirname(fileURLToPath(import.meta.url)),etc='/etc/meshpn-admin',base='/opt/meshpn-admin';
+const unit='meshpn-admin-management.service',unitPath='/etc/systemd/system/'+unit;
+const unitText=`# meshpn-admin-management-owned-v1
+[Unit]
+Description=Start MeshPN administration with opt-in private LAN access
+Requires=meshpn-admin.socket
+After=meshpn-admin.socket
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start meshpn-admin-web.service
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+`;
+const run=(...args)=>execFileSync('/usr/bin/systemctl',args,{encoding:'utf8',timeout:30000,stdio:['ignore','pipe','pipe']});
+const [action,...args]=process.argv.slice(2),options={};let apply=false;
+need(['enable','disable'].includes(action),'use_enable_or_disable');
+for(const arg of args){if(arg==='--apply'){need(!apply,'duplicate_apply');apply=true;continue;}const m=/^--(interface|subnet|port|capture-port)=(.+)$/.exec(arg);need(m&&!Object.hasOwn(options,m[1]),'management_argument');options[m[1]]=m[2];}
+need(action==='enable'||Object.keys(options).length===0,'disable_arguments');
+const access=action==='enable'?managementAccess({interface:options.interface,subnet:options.subnet,...(options.port?{port:Number(options.port)}:{}),...(options['capture-port']?{capturePort:Number(options['capture-port'])}:{})}):null;
+const plan={kind:'meshpn-admin-management',action,access,changedVpn:false,changedFirewall:false,changedMacNetwork:false};
+if(!apply){console.log(JSON.stringify({...plan,mode:'plan'},null,2));process.exit(0);}
+need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');
+need(readJson(etc+'/manifest.json').kind==='meshpn-admin-owned-install','install_manifest');
+need(!fs.existsSync('/etc/systemd/system/meshpn-admin-web.service.d/container.conf'),'management_standalone_required');
+const file=etc+'/web.json',before=readJson(file);
+need(!before.container&&!before.loopbackProxy&&!before.lab,'management_standalone_required');
+if(fs.existsSync(unitPath))need(fs.readFileSync(unitPath,'utf8')===unitText,'management_unit_changed');
+const files=[file,unitPath,base+'/admin/server.mjs',base+'/admin/lib/management-access.mjs'];
+const snapshots=files.map(p=>({path:p,exists:fs.existsSync(p),...(fs.existsSync(p)?{text:fs.readFileSync(p,'utf8'),mode:fs.statSync(p).mode&0o777}:{})}));
+const backup=fs.mkdtempSync(etc+'/management-backup-');fs.chmodSync(backup,0o700);atomic(backup+'/before.json',snapshots);
+let wasEnabled=false;try{wasEnabled=run('is-enabled',unit).trim()==='enabled';}catch{}
+try{
+ const next={...before};if(access)next.managementAccess=access;else delete next.managementAccess;
+ if(access){
+  for(const relative of ['server.mjs','lib/management-access.mjs'])atomic(base+'/admin/'+relative,fs.readFileSync(root+'/'+relative,'utf8'),0o644);
+  atomic(unitPath,unitText,0o644);
+ }else if(fs.existsSync(unitPath)){run('disable','--now',unit);fs.unlinkSync(unitPath);}
+ atomic(file,next,0o644);run('daemon-reload');
+ if(access)run('enable',unit);
+ run('restart','meshpn-admin-web.service');
+ if(access)run('start',unit);
+ console.log(JSON.stringify({...plan,mode:'applied',backup,activation:'listeners follow eligible IPv4 addresses; inspect journal for bind failures'},null,2));
+}catch(e){
+ try{if(!wasEnabled&&fs.existsSync(unitPath))run('disable','--now',unit);for(const s of snapshots){if(s.exists)atomic(s.path,s.text,s.mode);else if(fs.existsSync(s.path))fs.unlinkSync(s.path);}run('daemon-reload');if(wasEnabled)run('enable',unit);run('restart','meshpn-admin-web.service');if(wasEnabled)run('start',unit);}catch{console.error('management_rollback_failed: '+backup);}
+ throw e;
+}
