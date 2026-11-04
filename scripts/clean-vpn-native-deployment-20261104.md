@@ -505,3 +505,18 @@ listener без carrier не засчитано как успешная пров
 но эксперимент не разделяет питание, кабель и USB data path. Пользователю
 предложено вернуть тот же БП и iPhone uplink для чтения persistent journal;
 повторных запусков от Mac до разбора не планируется.
+
+После возврата на тот же БП без правок конфигурации плата снова загрузилась:
+boot `2b14df94-e812-447b-b1c8-eb3d0418d7cc`, UFS, engine ready/NRestarts=0,
+failed units нет, HTTPS через tun0 — 84.201.14.124, DNS отвечает, admin HTTP 200.
+Boot env checksum прежний. Между успешными boot найдены два коротких журнала
+`ceb78ef81a1142c7b859adcd4b490a3b` и `ed827ce913f64003b6492cc7ec9fe95a`.
+Оба скопированы в `mac-comparison-<boot-id>.log`; receipt успешного возврата —
+`psu-return-2b14df94.txt` в recovery directory.
+
+В сохранённых журналах этих двух попыток нет маркеров orderly shutdown,
+kernel panic/Oops, OOM, thermal shutdown, EXT4/I/O error или старта native engine.
+Последние сохранённые записи — ранний старт guard и flush journal. Это не
+доказывает отсутствие ошибки после последней записи и не исключает проблему
+драйвера/USB. Настройки/исходники/boot env не менялись; плата оставлена работающей
+от БП. Проверка реального USB-клиента по-прежнему не завершена.
