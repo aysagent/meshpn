@@ -20,7 +20,7 @@ if(process.argv[2]==='up'){
   stop();if(!address)return;
   iptables(['-I','OUTPUT','1',...managementMdnsRule(config.interface,address)]);
   current=desired;
-  const launched=spawn('/opt/meshpn-admin/admin/mdns-helper',[config.interface,name,address],{stdio:['ignore','pipe','ignore']});child=launched;
+  const launched=spawn('/opt/meshpn-admin/admin/mdns-helper',[config.interface,name,address,'dual-stack'],{stdio:['ignore','pipe','ignore']});child=launched;
   launched.stdout.on('data',data=>process.stdout.write(data));
   const failed=()=>{if(child===launched){child=null;current=null;}};
   launched.on('error',failed);launched.on('close',failed);

@@ -45,7 +45,7 @@ need(!before.container&&!before.loopbackProxy&&!before.lab,'management_standalon
 if(fs.existsSync(unitPath))need(fs.readFileSync(unitPath,'utf8')===unitText,'management_unit_changed');
 if(fs.existsSync(dropin))need([legacyDropin,lowPortDropin].includes(fs.readFileSync(dropin,'utf8')),'management_dropin_changed');
 if(fs.existsSync(mdnsPath))need(fs.readFileSync(mdnsPath,'utf8')===managementMdnsUnit,'management_mdns_unit_changed');
-if(access?.mdns){const capabilities=JSON.parse(execFileSync('/usr/local/bin/clean-vpn-killswitch.sh',['capabilities'],{encoding:'utf8'}));need(capabilities.management_mdns===true,'management_mdns_guard_update_required');need(fs.existsSync(base+'/admin/mdns-helper'),'management_mdns_helper_required');}
+if(access?.mdns){const capabilities=JSON.parse(execFileSync('/usr/local/bin/clean-vpn-killswitch.sh',['capabilities'],{encoding:'utf8'}));need(capabilities.management_mdns===true,'management_mdns_guard_update_required');need(fs.existsSync(base+'/admin/mdns-helper'),'management_mdns_helper_required');const helper=JSON.parse(execFileSync(base+'/admin/mdns-helper',['--capabilities'],{encoding:'utf8'}));need(helper.dual_stack_transport===true,'management_mdns_helper_update_required');}
 const code=['server.mjs','lib/management-access.mjs','management-mdns.mjs','lib/management-mdns.mjs'];
 const files=[file,unitPath,dropin,mdnsPath,...code.map(relative=>base+'/admin/'+relative)];
 const snapshots=files.map(p=>({path:p,exists:fs.existsSync(p),...(fs.existsSync(p)?{text:fs.readFileSync(p,'utf8'),mode:fs.statSync(p).mode&0o777,uid:fs.statSync(p).uid,gid:fs.statSync(p).gid}:{})}));
