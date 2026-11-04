@@ -54,7 +54,7 @@ sudo python3 scripts/clean-vpn-usb-boot-order.py --apply
 ## Ограниченный контракт
 
 - boring-tls либо combo-tls client с boring packet-веткой: `tun0`, peer IPv4 `10.99.0.2–10.99.0.254/32` (по умолчанию `.2`), MTU 1400, native DNS включён;
-- uplink `wlan0` с единственным IPv4 default gateway;
+- uplink `wlan0` по умолчанию либо `uplink: "auto"` для Ethernet/Wi-Fi: выбирается единственный IPv4 default route с наименьшей метрикой; резервные маршруты с большей метрикой сохраняются. Равные минимальные метрики, ECMP и неподдерживаемый выбранный интерфейс отклоняются. При смене выбранного uplink owner останавливает engine и восстанавливает собственную сеть перед повторным запуском;
 - USB `usb0`, `192.168.7.1/24`, уже настроенный forwarding=1;
 - независимый активный cvks4 guard both/block с тем же exit и SSH port 22;
 - старые VPN/TUN и USB SNAT owner заранее остановлены; существующий TUN не принимается;
