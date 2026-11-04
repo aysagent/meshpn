@@ -62,6 +62,10 @@ Host/Origin, пароль и CSRF проверяются прежним web-пр
 `/etc/meshpn-admin/management-backup-*`, добавляет
 `meshpn-admin-management.service` для старта web после USB socket при boot и
 перезапускает только web. VPN, broker, маршруты и firewall не переключаются.
+Web config читается только root и группой `meshpn-admin` (0640); исходники —
+0644, независимо от umask вызывающего root. Собственный `management.conf`
+drop-in разрешает AF_NETLINK для чтения списка интерфейсов; capabilities для
+изменения сети web-процессу не выдаются. Disable удаляет этот drop-in.
 При apply-ошибке восстанавливаются прежние файлы; ошибки bind видны в журнале:
 `journalctl -u meshpn-admin-web.service`. Подсеть при смене сети нужно выбрать
 заново; автоматического открытия на любом uplink нет.

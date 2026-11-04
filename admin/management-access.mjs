@@ -9,6 +9,8 @@ import {need,readJson,atomic} from './lib/common.mjs';
 
 const root=path.dirname(fileURLToPath(import.meta.url)),etc='/etc/meshpn-admin',base='/opt/meshpn-admin';
 const unit='meshpn-admin-management.service',unitPath='/etc/systemd/system/'+unit;
+const dropinDir='/etc/systemd/system/meshpn-admin-web.service.d',dropin=dropinDir+'/management.conf';
+const dropinText='# meshpn-admin-management-owned-v1\n[Service]\nRestrictAddressFamilies=\nRestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK\n';
 const unitText=`# meshpn-admin-management-owned-v1
 [Unit]
 Description=Start MeshPN administration with opt-in private LAN access
@@ -33,10 +35,13 @@ need(process.platform==='linux'&&process.getuid()===0,'linux_root_required');
 need(readJson(etc+'/manifest.json').kind==='meshpn-admin-owned-install','install_manifest');
 need(!fs.existsSync('/etc/systemd/system/meshpn-admin-web.service.d/container.conf'),'management_standalone_required');
 const file=etc+'/web.json',before=readJson(file);
+const group=execFileSync('/usr/bin/getent',['group','meshpn-admin'],{encoding:'utf8'}).trim().split(':');
+need(group[0]==='meshpn-admin'&&/^\d+$/.test(group[2]),'management_web_group');const webGid=Number(group[2]);
 need(!before.container&&!before.loopbackProxy&&!before.lab,'management_standalone_required');
 if(fs.existsSync(unitPath))need(fs.readFileSync(unitPath,'utf8')===unitText,'management_unit_changed');
-const files=[file,unitPath,base+'/admin/server.mjs',base+'/admin/lib/management-access.mjs'];
-const snapshots=files.map(p=>({path:p,exists:fs.existsSync(p),...(fs.existsSync(p)?{text:fs.readFileSync(p,'utf8'),mode:fs.statSync(p).mode&0o777}:{})}));
+if(fs.existsSync(dropin))need(fs.readFileSync(dropin,'utf8')===dropinText,'management_dropin_changed');
+const files=[file,unitPath,dropin,base+'/admin/server.mjs',base+'/admin/lib/management-access.mjs'];
+const snapshots=files.map(p=>({path:p,exists:fs.existsSync(p),...(fs.existsSync(p)?{text:fs.readFileSync(p,'utf8'),mode:fs.statSync(p).mode&0o777,uid:fs.statSync(p).uid,gid:fs.statSync(p).gid}:{})}));
 const backup=fs.mkdtempSync(etc+'/management-backup-');fs.chmodSync(backup,0o700);atomic(backup+'/before.json',snapshots);
 let wasEnabled=false;try{wasEnabled=run('is-enabled',unit).trim()==='enabled';}catch{}
 try{
@@ -44,13 +49,14 @@ try{
  if(access){
   for(const relative of ['server.mjs','lib/management-access.mjs'])publish(base+'/admin/'+relative,fs.readFileSync(root+'/'+relative,'utf8'));
   publish(unitPath,unitText);
- }else if(fs.existsSync(unitPath)){run('disable','--now',unit);fs.unlinkSync(unitPath);}
- publish(file,next);run('daemon-reload');
+  fs.mkdirSync(dropinDir,{recursive:true,mode:0o755});fs.chmodSync(dropinDir,0o755);publish(dropin,dropinText);
+ }else{if(fs.existsSync(unitPath)){run('disable','--now',unit);fs.unlinkSync(unitPath);}if(fs.existsSync(dropin))fs.unlinkSync(dropin);}
+ publish(file,next,0o640);fs.chownSync(file,0,webGid);run('daemon-reload');
  if(access)run('enable',unit);
  run('restart','meshpn-admin-web.service');
  if(access)run('start',unit);
  console.log(JSON.stringify({...plan,mode:'applied',backup,activation:'listeners follow eligible IPv4 addresses; inspect journal for bind failures'},null,2));
 }catch(e){
- try{if(!wasEnabled&&fs.existsSync(unitPath))run('disable','--now',unit);for(const s of snapshots){if(s.exists)publish(s.path,s.text,s.mode);else if(fs.existsSync(s.path))fs.unlinkSync(s.path);}run('daemon-reload');if(wasEnabled)run('enable',unit);run('restart','meshpn-admin-web.service');if(wasEnabled)run('start',unit);}catch{console.error('management_rollback_failed: '+backup);}
+ try{if(!wasEnabled&&fs.existsSync(unitPath))run('disable','--now',unit);for(const s of snapshots){if(s.exists){publish(s.path,s.text,s.mode);fs.chownSync(s.path,s.uid,s.gid);}else if(fs.existsSync(s.path))fs.unlinkSync(s.path);}run('daemon-reload');if(wasEnabled)run('enable',unit);run('restart','meshpn-admin-web.service');if(wasEnabled)run('start',unit);}catch{console.error('management_rollback_failed: '+backup);}
  throw e;
 }
