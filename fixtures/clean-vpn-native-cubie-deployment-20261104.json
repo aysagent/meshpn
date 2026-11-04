@@ -78,7 +78,27 @@
       "nextBoot": "ordinary; temporary rescue-arm requires link removed and daemon reloaded",
       "bootEnvSha256": "53e5815b86d14223d8857c2d38eaa9d7e0bd44c3a4690eb69f96e796284c7953",
       "remainingRecoveryArtifacts": "manual rescue target/helpers, rescue-only usbmuxd generator, persistent diagnostic journal and disabled armbian-ramlog retained",
-      "fullStackPhysicalColdBoot": "not yet tested",
+      "fullStackPhysicalColdBoot": {
+        "bootId": "9c3b8e81-847e-426b-b7fd-d35a1eca64ed",
+        "power": "user power cycle on separate PSU after graceful shutdown",
+        "root": "/dev/sda1",
+        "bootMode": "ordinary; boot env checksum unchanged",
+        "native": "ready, NRestarts=0",
+        "networkOwnerRestarts": 1,
+        "networkOwnerRetryReason": "initial default route not yet acquired from iPhone DHCP",
+        "networkReadyUptimeSeconds": 35.43,
+        "failedUnits": 0,
+        "ntpSynchronized": true,
+        "adminHttp": 200,
+        "tunHttpsExternalIp": "84.201.14.124",
+        "nativeDnsUdpAndTcp": "passed",
+        "tunDownloadBytes": 1048576,
+        "tunUploadBytes": 262144,
+        "downloadHttp": 200,
+        "uploadHttp": 200,
+        "guardHookBeforeVendorHook": true,
+        "usb": "configured, no carrier; PSU occupies gadget connector; user has no simultaneous power/data adapter; DHCP lease not tested"
+      },
       "usbClientAndTransparentAfterRecovery": "not yet tested; latest traffic probes originate on board through TUN",
       "rootCause": "unconfirmed; successful PSU boots support power hypothesis but no electrical measurements"
     }

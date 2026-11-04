@@ -468,3 +468,32 @@ persistent journal и отключённый armbian-ramlog пока сохра�
 питания от Mac, но без измерений не доказывает её. Следующие проверки — холодный
 запуск полного стека и реальный USB-клиент, включая transparent-ветку combo;
 после этого можно убрать оставшиеся временные диагностические настройки.
+
+### Холодный запуск полного стека от БП принят
+
+После штатного `systemctl poweroff` пользователь выключил/включил питание от
+того же БП. Новый boot `9c3b8e81-847e-426b-b7fd-d35a1eca64ed`: UFS `/dev/sda1`,
+обычный kernel command line без rescue target, boot env SHA256 не изменён.
+Штатные gadget/firewall/guard/networkd/resolved/admin socket active, failed
+units нет. iPhone получил DHCP на uptime 15.84 s. Network owner один раз
+повторил запуск после отсутствующего default route; сеть готова на 35.43 s,
+engine ready, NRestarts=0. NTP synchronized.
+
+Проверки с самой платы: HTTPS через tun0 — exit IP 84.201.14.124;
+native DNS UDP/TCP ответили; admin HTTP 200; download 1 MiB и upload 256 KiB
+завершились HTTP 200. Guard hook перед vendor FORWARD hook. Результаты и журнал:
+`cold-boot-9c3b8e81-acceptance.txt`, `cold-boot-9c3b8e81-journal.log` в recovery
+directory. До выключения сохранены `before-full-cold-boot*.txt/log`.
+
+USB `192.168.8.1` настроен, но no-carrier: БП занимает тот же разъём, куда раньше
+подключался Mac. Пользователь подтвердил отсутствие адаптера для одновременного
+внешнего питания и USB-клиента. Поэтому выдача USB DHCP lease и transparent
+interception после восстановления остаются непроверенными; отсутствие DHCP
+listener без carrier не засчитано как успешная проверка DHCP. Плата оставлена
+на БП с работающим VPN, настройки сети Mac не менялись. Диагностические файлы
+сохранены до завершения проверки USB-клиента.
+
+После этого пользователь предложил снова подключить плату к Mac. Для сравнения
+питания при той же конфигурации сохранён `before-mac-power-comparison.txt` и
+обновлён журнал успешного холодного запуска от БП; выполнен штатный poweroff.
+Ожидается физическое подключение к Mac, результат этой проверки пока неизвестен.
