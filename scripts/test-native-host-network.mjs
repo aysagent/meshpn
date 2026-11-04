@@ -64,6 +64,7 @@ test('Cubie profile keeps SNAT and combo scoped to .8, refuses cross-subnet bind
  assert.ok(plan.every(o=>o.spec.includes('192.168.8.0/24')));
  assert.ok(!JSON.stringify(plan).includes('192.168.7.'));
  for(const usb_address of ['192.168.1.1','0.0.0.0',null])assert.throws(()=>validateNativeHostConfig({...c,usb_address}));
- for(const uplink of ['usb0','tun0','lo','x;id'])assert.throws(()=>validateNativeHostConfig({...c,uplink}));
+ for(const uplink of ['wlan0','enx123456789012','eth0','iphone0'])validateNativeHostConfig({...c,uplink});
+ for(const uplink of ['usb0','tun0','lo','iphone0;id','iphone1','x;id'])assert.throws(()=>validateNativeHostConfig({...c,uplink}));
  assert.throws(()=>validateNativeHostConfig({...c,combo_redirect:{interface:'usb0',subnet:'192.168.7.0/24',endpoint:c.exit_ip,listen_port:10443,deny_ipv4:[]}}));
 });

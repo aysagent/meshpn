@@ -1,0 +1,7 @@
+# clean-vpn-iphone-uplink-v1: one USB iPhone, independent of its MAC address.
+[Match]
+Driver=ipheth
+
+[Link]
+NamePolicy=
+Name=iphone0

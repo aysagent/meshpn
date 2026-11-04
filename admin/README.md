@@ -37,11 +37,11 @@ HTTP. Для доверенной локальной сети доступ вк�
 
 При питании A7Z от отдельного БП можно открыть ту же админку через iPhone USB
 tether uplink. Это opt-in для standalone-установки; USB-доступ сохраняется.
-Пример для проверенной Cubie (имя интерфейса и подсеть относятся к её iPhone):
+Пример для USB iPhone после настройки [стабильного имени iphone0](../scripts/clean-vpn-iphone-uplink.md) (подсеть сверить с DHCP):
 
 ```sh
 sudo /opt/meshpn-admin/node admin/management-access.mjs enable \
-  --interface=enx5e50d9f02053 --subnet=172.20.10.0/28 --port=80 --mdns --apply
+  --interface=iphone0 --subnet=172.20.10.0/28 --port=80 --mdns --apply
 ```
 
 Без `--apply` команда только печатает план. Адрес при текущей DHCP-аренде:

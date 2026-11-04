@@ -15,7 +15,7 @@ const cmd=(f,a)=>execFileSync(f,a,{encoding:'utf8',timeout:20000,maxBuffer:1024*
 const ip=(...a)=>cmd('ip',a);
 assert.deepEqual(JSON.parse(ip('-j','link')).map(l=>l.ifname),['lo']);
 let checks=0;const check=(name,fn)=>{fn();console.log('HOST_NETWORK_CHECK '+name);checks++;};
-const cubie=process.env.CVPN_CUBIE_PROFILE==='1',usbAddress=cubie?'192.168.8.1':'192.168.7.1',usbSubnet=cubie?'192.168.8.0/24':'192.168.7.0/24',uplink=cubie?'enx123456789012':'wlan0';
+const cubie=process.env.CVPN_CUBIE_PROFILE==='1',usbAddress=cubie?'192.168.8.1':'192.168.7.1',usbSubnet=cubie?'192.168.8.0/24':'192.168.7.0/24',uplink=cubie?(process.env.CVPN_IPHONE_PROFILE==='1'?'iphone0':'enx123456789012'):'wlan0';
 let c={...(cubie?{usb_address:usbAddress,uplink:'auto'}:{}),version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
 ip('link','set','lo','up');
 for(const [dev,address] of [['usb0',usbAddress+'/24'],[uplink,'192.168.1.8/24']]){

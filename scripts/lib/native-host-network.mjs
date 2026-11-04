@@ -1,7 +1,7 @@
 // Reviewed Radxa IPv4 profile. Control plane only; all payload IO stays native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
-import {nativeHostProfile} from './native-host-profile.mjs';
+import {nativeHostProfile,nativeUplinkInterface} from './native-host-profile.mjs';
 import {validateNativeComboRedirectConfig} from './native-combo-redirect-plan.mjs';
 import {validateTunnelDnsAddress} from './dns-tunnel-plan.mjs';
 import {preferredDefaultRoute} from './vpn-host-routes.mjs';
@@ -145,7 +145,7 @@ export function nativeHostNetwork(c, io) {
   const uplink = (rows=ip('-j','-4','route','show','default')) => {
     const selected=preferredDefaultRoute(rows);
     if(profile.uplink!=='auto')assert.equal(selected.dev,profile.uplink,'native_default_uplink');
-    assert.ok(/^(?:wlan[0-9]+|en[a-zA-Z0-9_.-]{1,13}|eth[0-9]+)$/.test(selected.dev),'native_default_uplink');assert.ok(isIPv4(selected.gateway));
+    assert.ok(nativeUplinkInterface(selected.dev),'native_default_uplink');assert.ok(isIPv4(selected.gateway));
     return {dev:selected.dev,gateway:selected.gateway};
   };
   return {
