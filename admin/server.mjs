@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import {brokerStartupSettings} from './lib/broker-startup.mjs';
 import {managementAccess,managementPeer,startManagementListeners} from './lib/management-access.mjs';
 import {diagnosticExport} from './lib/diagnostics.mjs';
 import {X509Certificate} from 'node:crypto';
@@ -17,7 +18,7 @@ const PUBLIC=fileURLToPath(new URL('./public/',import.meta.url));
 export async function brokerRequest(socket,route,data={}){return await new Promise((resolve,reject)=>{const req=http.request({socketPath:socket,path:route,method:'POST',headers:{'content-type':'application/json'}},res=>{let bytes=0,chunks=[];res.on('data',b=>{bytes+=b.length;if(bytes>24*1024*1024){req.destroy();reject(Error('broker_response_limit'));}else chunks.push(b);});res.on('end',()=>{try{const data=JSON.parse(Buffer.concat(chunks));if(res.statusCode!==200)throw Object.assign(Error(data.error??'broker_failed'),{status:res.statusCode});resolve(data);}catch(e){reject(e);}});});req.setTimeout(20000,()=>req.destroy(Error('broker_timeout')));req.on('error',reject);req.end(JSON.stringify(data));});}
 export async function createAdmin(c,{rpc=(route,data)=>brokerRequest(c.brokerSocket,route,data),run=command,interfaces}={}){
  const management=managementAccess(c.managementAccess);need(!management||!c.lab&&!c.container&&!c.loopbackProxy,'management_standalone_required');
- need(net.isIPv4(c.address)&&typeof c.subnet==='string'&&ipv4Subnet(c.address,c.subnet),'usb_bind');need(Number.isInteger(c.port)&&c.port>=0&&c.port<=65535,'listen_port');fs.mkdirSync(c.state,{recursive:true,mode:0o700});const auth=new Auth(c.state+'/auth.json');await auth.init();let mutationBusy=false,downloadBusy=false;let currentHostname=hostname((await rpc('/settings',{})).hostname),capture=null,captureView=null,captureTimer;
+ need(net.isIPv4(c.address)&&typeof c.subnet==='string'&&ipv4Subnet(c.address,c.subnet),'usb_bind');need(Number.isInteger(c.port)&&c.port>=0&&c.port<=65535,'listen_port');fs.mkdirSync(c.state,{recursive:true,mode:0o700});const auth=new Auth(c.state+'/auth.json');await auth.init();let mutationBusy=false,downloadBusy=false;let currentHostname=hostname((await brokerStartupSettings(()=>rpc('/settings',{}))).hostname),capture=null,captureView=null,captureTimer;
  if(c.captureHostname!==undefined)need(typeof c.captureHostname==='string'&&c.captureHostname.length<=253&&c.captureHostname.split('.').every(label=>/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)),'capture_hostname');
  const cookie=sid=>`mpn_session=${sid}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800`;
  const publicPort=c.publicPort??c.port,publicAddress=c.publicAddress??c.address;
