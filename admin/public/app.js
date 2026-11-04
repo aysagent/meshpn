@@ -12,9 +12,16 @@ function applyCapabilities(c={},role=settings?.vpn?.role??'client'){const flags=
 function bytes(x){return Number.isFinite(x)?(x/1024/1024).toFixed(0)+' MiB':'—';}
 function renderTemperatures(temperatures=[]){
  const labels={cpu:'CPU',cpub:'CPU B',cpul:'CPU L',gpu:'GPU',ddr:'DDR',npu:'NPU',soc:'SoC'};
- const rows=temperatures.filter(t=>Number.isFinite(t.celsius)).map((t,i)=>{
+ const sensorKey=t=>(typeof t.name==='string'?t.name.trim().toLowerCase():'').replace(/[-_]thermal(?:[-_]zone)?$/,'');
+ const sensors=temperatures.filter(t=>Number.isFinite(t.celsius));
+ const little=sensors.findIndex(t=>sensorKey(t)==='cpul');
+ if(little>=0&&sensors.some(t=>sensorKey(t)==='cpub')){
+  const [sensor]=sensors.splice(little,1);
+  sensors.splice(sensors.findIndex(t=>sensorKey(t)==='cpub')+1,0,sensor);
+ }
+ const rows=sensors.map((t,i)=>{
   const name=typeof t.name==='string'?t.name.trim():'';
-  const key=name.toLowerCase().replace(/[-_]thermal(?:[-_]zone)?$/,'');
+  const key=sensorKey(t);
   const row=document.createElement('span');row.className='temperature-reading';
   row.textContent=(labels[key]??(name||('Датчик '+(i+1))))+': '+t.celsius.toFixed(1)+' °C';
   if(name)row.title=name;
