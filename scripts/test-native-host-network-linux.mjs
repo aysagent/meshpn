@@ -70,6 +70,21 @@ try{
   check('replaced alias refuses deletion',()=>{ip('link','set','tun0','alias','foreign');assert.throws(()=>owner.recover(),/owner_changed/);ip('link','set','tun0','alias','cvpn-native-host-'+store.read().id);});
   check('guard failure retains owned network',()=>{active=false;assert.throws(()=>owner.recover(),/guard_inactive/);assert.equal(store.read().stage,'active');active=true;});
   check('cleanup restores baseline and is repeatable',()=>{owner.recover();owner.recover();baseline();});
+  if(cubie)check('USB and Wi-Fi defaults select preferred metric and recover on uplink change',()=>{
+    ip('link','add','wlan0','type','dummy');ip('addr','add','192.168.2.8/24','dev','wlan0');ip('link','set','wlan0','up');
+    ip('route','add','default','via','192.168.2.1','dev','wlan0','metric','600');
+    owner.preflight();owner.prepare();assert.equal(owner.tick().state,'network-ready');
+    assert.equal(JSON.parse(ip('-j','route','get',c.exit_ip))[0].dev,uplink);
+    ip('route','del','default','via','192.168.1.1','dev',uplink);
+    assert.throws(()=>owner.tick(),/exit route ownership mismatch/);
+    owner.recover();owner.prepare();assert.equal(owner.tick().state,'network-ready');
+    assert.equal(JSON.parse(ip('-j','route','get',c.exit_ip))[0].dev,'wlan0');
+    ip('route','add','default','via','192.168.1.1','dev',uplink);
+    assert.throws(()=>owner.tick(),/exit route ownership mismatch/);
+    owner.recover();owner.prepare();assert.equal(owner.tick().state,'network-ready');
+    assert.equal(JSON.parse(ip('-j','route','get',c.exit_ip))[0].dev,uplink);
+    owner.recover();ip('link','del','wlan0');baseline();
+  });
   close();open();
   check('new owner starts after released journal',()=>{owner.prepare();owner.tick();});
   const previous=c;c={...c,engine_unit:'native-next.service',network_unit:'native-next-network.service'};close();open();

@@ -4,6 +4,7 @@ import { isIPv4 } from 'node:net';
 import {nativeHostProfile} from './native-host-profile.mjs';
 import {validateNativeComboRedirectConfig} from './native-combo-redirect-plan.mjs';
 import {validateTunnelDnsAddress} from './dns-tunnel-plan.mjs';
+import {preferredDefaultRoute} from './vpn-host-routes.mjs';
 
 export function validateNativeHostConfig(c) {
   const profile=nativeHostProfile(c);
@@ -141,12 +142,11 @@ export function nativeHostNetwork(c, io) {
       assert.ok(!cmd('iptables',['-w','5','-t',table,'-S']).includes('clean-vpn-usb-'),'native_old_snat_owner_active');
     }
   };
-  const uplink = () => {
-    const rows=ip('-j','-4','route','show','default');
-    assert.equal(rows.length,1,'native_single_default_required');
-    if(profile.uplink!=='auto')assert.equal(rows[0].dev,profile.uplink);
-    assert.ok(/^(?:wlan[0-9]+|en[a-zA-Z0-9_.-]{1,13}|eth[0-9]+)$/.test(rows[0].dev),'native_default_uplink');assert.ok(isIPv4(rows[0].gateway));
-    assert.ok(!rows[0].nexthops);return {dev:rows[0].dev,gateway:rows[0].gateway};
+  const uplink = (rows=ip('-j','-4','route','show','default')) => {
+    const selected=preferredDefaultRoute(rows);
+    if(profile.uplink!=='auto')assert.equal(selected.dev,profile.uplink,'native_default_uplink');
+    assert.ok(/^(?:wlan[0-9]+|en[a-zA-Z0-9_.-]{1,13}|eth[0-9]+)$/.test(selected.dev),'native_default_uplink');assert.ok(isIPv4(selected.gateway));
+    return {dev:selected.dev,gateway:selected.gateway};
   };
   return {
     preflight,
@@ -191,14 +191,16 @@ export function nativeHostNetwork(c, io) {
       if(c.combo_redirect)assert.equal(redirect.audit().stage,'active','native_redirect_inactive');
       guard();assert.ok(ownedTun(s),'native_tun_missing');journalScope(s);natAudit(s,true);
       const defaults=ip('-j','-4','route','show','default');
-      const link=ip('-j','link','show').find(l=>l.ifname===(profile.uplink==='auto'?defaults[0]?.dev:profile.uplink));
+      if(defaults.length===0)return {state:'waiting-uplink'};
+      const current=uplink(defaults);
+      const link=ip('-j','link','show').find(l=>l.ifname===current.dev);
       // An ordinary Wi-Fi outage is not a failed installation. Retain the
       // guard/DNS/TUN and let the native engine's reconnect remain bounded.
-      if(!link?.flags.includes('UP')||!link.flags.includes('LOWER_UP')||defaults.length===0)
+      if(!link?.flags.includes('UP')||!link.flags.includes('LOWER_UP'))
         return {state:'waiting-uplink'};
       // Repair only the same interface/gateway. A changed lease triggers a
       // stopped-engine recovery/restart instead of mutating a live route set.
-      const current=uplink();host.repairUplink(current.dev,current.gateway,c.exit_ip);host.repairTunRoutes();
+      host.repairUplink(current.dev,current.gateway,c.exit_ip);host.repairTunRoutes();
       return {state:'network-ready'};
     },
   };

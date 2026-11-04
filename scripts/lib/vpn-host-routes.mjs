@@ -14,6 +14,20 @@ const iface = v => assert.ok(typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.-
 const dst = v => { assert.ok(typeof v === 'string' && (['0.0.0.0/1', '128.0.0.0/1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'].includes(v)
   || v.endsWith('/32') && isIPv4(v.slice(0, -3)))); return v; };
 const normalizeDst = v => isIPv4(v) ? `${v}/32` : v;
+// Main-table defaults only. Never guess between equal-cost paths or ECMP.
+// A backup with a higher metric must not prevent repair of the preferred path.
+export function preferredDefaultRoute(rows) {
+  const defaults = rows.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
+  for (const r of defaults) assert.ok(Number.isSafeInteger(r.metric ?? 0) && (r.metric ?? 0) >= 0, 'native_default_metric');
+  assert.ok(defaults.length, 'native_default_required');
+  const metric = Math.min(...defaults.map(r => r.metric ?? 0));
+  const best = defaults.filter(r => (r.metric ?? 0) === metric);
+  assert.equal(best.length, 1, 'native_default_ambiguous');
+  const r = best[0];
+  assert.ok((!r.type || r.type === 'unicast') && !r.nexthops && !r.nhid, 'native_default_unsupported');
+  assert.ok(!(r.flags ?? []).some(f => ['dead', 'linkdown'].includes(f)), 'native_default_unavailable');
+  return r;
+}
 export function validateHostRouteState(s) {
   keys(s, ['schema', 'scope', 'tun', 'links', 'routes', 'rp', 'stage', ...(Object.hasOwn(s, 'transition') ? ['transition'] : [])]); assert.equal(s.schema, 1);
   keys(s.scope, ['boot', 'net', 'user']); assert.match(s.scope.boot, /^[a-f0-9-]{36}$/);
@@ -139,9 +153,8 @@ export function openHostRoutes({ directory = hostRouteStateDirectory(), run: inj
       if (intent) assert.ok(intent.dev === dev && intent.gateway === gateway, 'exit route ownership mismatch');
       const auditUplink = () => {
         const table = audit({ requireTun: true });
-        const defaults = table.filter(r => ['default', '0.0.0.0/0'].includes(r.dst));
-        assert.ok(defaults.length === 1 && defaults[0].dev === dev && (defaults[0].gateway ?? null) === gateway
-          && (!defaults[0].type || defaults[0].type === 'unicast') && !defaults[0].nexthops,
+        const selected = preferredDefaultRoute(table);
+        assert.ok(selected.dev === dev && (selected.gateway ?? null) === gateway,
         'uplink default absent or changed; reconnect postponed');
         if (!intent) {
           const borrowed = table.filter(r => normalizeDst(r.dst) === target);

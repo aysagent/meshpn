@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync, chmodSync, renameSync, symlinkSync, linkSync, existsSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { tmpdir } from 'node:os';
-import { openHostRoutes, validateHostRouteState } from './lib/vpn-host-routes.mjs';
+import { openHostRoutes, validateHostRouteState, preferredDefaultRoute } from './lib/vpn-host-routes.mjs';
 import { recoverHost } from './clean-vpn-host-recover.mjs';
 
 // Execute the real CLI route setup with fake kernel IO and a real durable journal.
@@ -181,7 +181,7 @@ test('repair stops before a second write after checkpoint changes ' + change, t 
   try { assert.throws(() => r.repairUplink('eth0', '192.0.2.1', '198.51.100.2')); assert.equal(f.changes, before + 1); }
   finally { r.release(); }
 });
-for (const fault of ['no-default', 'new-gateway', 'new-interface', 'foreign-exit', 'foreign-private', 'missing-tun', 'multiple-defaults'])
+for (const fault of ['no-default', 'new-gateway', 'new-interface', 'foreign-exit', 'foreign-private', 'missing-tun', 'equal-cost-defaults'])
   test(`uplink repair refuses ${fault} before writes`, t => {
     const f = fixture(t), r = f.open(); r.begin('tun0');
     r.add('198.51.100.2/32', 'eth0', '192.0.2.1'); r.add('192.168.0.0/16', 'eth0', '192.0.2.1');
@@ -192,7 +192,7 @@ for (const fault of ['no-default', 'new-gateway', 'new-interface', 'foreign-exit
     if (fault === 'foreign-exit') f.routes.push({ dst: '198.51.100.2', dev: 'tun0', protocol: 'static' });
     if (fault === 'foreign-private') f.routes.push({ dst: '192.168.0.0/16', dev: 'eth0', gateway: '192.0.2.1', protocol: 'static' });
     if (fault === 'missing-tun') f.links.shift();
-    if (fault === 'multiple-defaults') f.routes.push({ ...f.routes[0], metric: 10 });
+    if (fault === 'equal-cost-defaults') f.routes.push({ ...f.routes[0], dev: 'eth1' });
     const changes = f.changes;
     try { assert.throws(() => r.repairUplink('eth0', '192.0.2.1', '198.51.100.2')); assert.equal(f.changes, changes); }
     finally { r.release(); }
@@ -337,4 +337,32 @@ test('uplink cancellation reaches the pending connector and the next attempt get
   api.abort(); await failed; assert.equal(api.pending(), null);
   await api.connect(); assert.equal(signals[0].aborted, true); assert.equal(signals[1].aborted, false);
   assert.notEqual(signals[0], signals[1]); assert.equal(api.pending(), null);
+});
+
+
+test('default selection uses metric, preserves backup routes and refuses ambiguity', () => {
+  const wifi={dst:'default',dev:'wlan0',gateway:'172.20.10.1',metric:600};
+  const usb={dst:'default',dev:'enx5e50d9f02053',gateway:'172.20.10.1',metric:50};
+  for(const rows of [[wifi,usb],[usb,wifi]])assert.equal(preferredDefaultRoute(rows),usb);
+  assert.equal(preferredDefaultRoute([usb]),usb);
+  assert.equal(preferredDefaultRoute([wifi]),wifi);
+  assert.equal(preferredDefaultRoute([wifi,{...usb,metric:undefined}]).dev,usb.dev);
+  for(const rows of [[],[wifi,{...usb,metric:600}],[{...usb,nexthops:[]}],[{...usb,nhid:1}],
+    [{...usb,type:'blackhole'}],[{...usb,flags:['linkdown']}],[{...usb,metric:-1}],[{...usb,metric:'50'}]])
+    assert.throws(()=>preferredDefaultRoute(rows));
+});
+
+test('uplink repair retains lower-priority defaults and refuses a new preferred path before writes', t => {
+  const f=fixture(t),r=f.open();r.begin('tun0');
+  r.add('198.51.100.2/32','eth0','192.0.2.1');
+  const preferred={dst:'default',dev:'eth0',gateway:'192.0.2.1',metric:50};
+  const backup={dst:'default',dev:'wlan0',gateway:'192.0.2.1',metric:600};
+  f.routes=[backup,preferred];
+  try{
+    assert.equal(r.repairUplink('eth0','192.0.2.1','198.51.100.2'),1);
+    assert.ok(f.routes.includes(backup));assert.ok(f.routes.includes(preferred));
+    const changes=f.changes;backup.metric=10;
+    assert.throws(()=>r.repairUplink('eth0','192.0.2.1','198.51.100.2'),/default absent or changed/);
+    assert.equal(f.changes,changes);
+  }finally{r.release();}
 });
