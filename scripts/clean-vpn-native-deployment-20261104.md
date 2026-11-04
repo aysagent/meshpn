@@ -548,3 +548,39 @@ Native engine остался с PID 2146 и NRestarts=0 в boot 2b14df94; firewa
 GitHub SSH-авторизации коммиты до 2cdda77 доставлены через `git bundle`,
 `git fetch` и `git merge --ff-only`, без редактирования исходников на плате.
 Backup перед повторным apply: `/etc/meshpn-admin/management-backup-97OZMy`.
+
+### Имя mpn-cubie.local и обычный порт 80
+
+По следующему запросу management переведён на HTTP 80 с `--mdns`.
+**Текущий URL: http://mpn-cubie.local/**, запасной **http://172.20.10.3/**;
+8080 больше не слушается. Web остаётся UID `meshpn-admin`; добавлена только
+CAP_NET_BIND_SERVICE. Сессии/Origin/CSRF и USB-админка сохранены.
+
+Отдельная root-служба публикует текущий hostname админки через Avahi на
+`enx5e50d9f02053`, отслеживает DHCP/смену имени. Её CAP_NET_ADMIN используется
+для одного точного IPv4 mDNS OUTPUT-исключения. Новый guard распознаёт его
+полную форму, частный source /32 и конкретный интерфейс; broad multicast,
+DNS 53, wildcard interface и TUN запрещены аудитом. Guard/script обновлён из
+Git с проверкой исходного SHA256, backup
+`/root/cvpn-ufs-recovery-20261104/management-mdns-DFBg0D` и обновлением `after`
+в native setup journal; guard/engine не перезапускались.
+
+Avahi helper собран из Git-кода с `-Wall -Werror`. Management использует
+dual-stack mDNS transport для A-записи, прежний USB-вызов сохраняет IPv4 default.
+Backup прежнего helper — `mdns-helper.before-dual` в recovery directory.
+Web listener остаётся IPv4; фиктивная AAAA-запись не добавляется.
+
+На A7Z прошли 72 теста web/management/guard и read-only audit реального IPv4/IPv6
+firewall. На Mac `dns-sd` получил A=172.20.10.3. Обычные curl и Node fetch по
+имени получили HTTP 200; login/status/logout по http://mpn-cubie.local — 200.
+Есть задержка около 5 s в dual-family DNS lookup, тогда как `curl -4` открывает
+имя сразу. Публикация через оба mDNS-семейства эту задержку не устранила;
+дальнейшее исследование отрицательного AAAA-ответа остаётся отдельной задачей.
+Тест DNS-имени в URL/сертификате capture добавлен и прошёл локально.
+
+Реальный stop/start mDNS-службы удаляет и восстанавливает только её правило;
+guard status остаётся cvks5 для обеих семей. Engine PID 2146/NRestarts=0/ready
+не изменился, failed units нет. Обе management-службы enabled; физический reboot
+после этого изменения не выполнялся. Receipt — `admin-mdns-port80-acceptance.txt`.
+Mac hosts/DNS/routes/Wi-Fi не менялись. GitHub по-прежнему отклоняет SSH-ключ;
+код до 36e0416 доставлен на A7Z через Git bundle/fetch/fast-forward.

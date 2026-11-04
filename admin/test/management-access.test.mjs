@@ -58,6 +58,9 @@ test('management HTTP retains authentication, host/origin and shared password/se
  assert.equal(capture.status,200,capture.body);assert.match(JSON.parse(capture.body).url,/^https:\/\/172\.20\.10\.3:18443\/capture\/[a-f0-9]+$/);
  const {X509Certificate}=await import('node:crypto');assert(new X509Certificate(fs.readFileSync(state+'/capture.pem')).checkIP('172.20.10.3'));
  assert.equal((await request('/api/capture/stop',{cookie,csrf,data:{}})).status,200);
+ const namedCapture=await request('/api/capture/start',{host:'mpn.local:8080',origin:'http://mpn.local:8080',cookie,csrf,data:{browser:'chromium',version:'156',platform:'linux',architecture:'x86_64',extensionOrder:'permuted',echMode:'disabled',padding:'optional'}});
+ assert.equal(namedCapture.status,200,namedCapture.body);assert.match(JSON.parse(namedCapture.body).url,/^https:\/\/mpn\.local:18443\/capture\/[a-f0-9]+$/);assert(new X509Certificate(fs.readFileSync(state+'/capture.pem')).checkHost('mpn.local'));
+ assert.equal((await request('/api/capture/stop',{cookie,csrf,data:{}})).status,200);
  peer='172.20.10.20';assert.equal((await request('/')).status,403);
 });
 test('mDNS cleanup recognizes only the exact owned private-address rule',()=>{
