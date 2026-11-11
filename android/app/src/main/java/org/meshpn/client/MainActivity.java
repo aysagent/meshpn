@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 public final class MainActivity extends Activity {
     private static final int PERMISSION=1, IMPORT=2, EXPORT=3;
     private final Handler handler=new Handler(Looper.getMainLooper());
+    private final java.text.SimpleDateFormat deviceTime=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",java.util.Locale.ROOT);
     private TextView status, details, counters, message;
     private Button connect, fileImport, pasteImport, check, selectServer, deleteServer;
     private CheckBox profile, autostart;
@@ -36,6 +37,7 @@ public final class MainActivity extends Activity {
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
+        deviceTime.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
         consent=new VpnConsent<>(new VpnConsent.Host<Intent>(){
             public Intent prepare(){
                 Intent intent=VpnService.prepare(MainActivity.this);
@@ -82,7 +84,14 @@ public final class MainActivity extends Activity {
         check=button(page,"Проверить доступность HTTPS",this::checkConnection);
         button(page,"Показать диагностику",this::showDiagnostics);
         button(page,"Сохранить отчёт на SD / память",this::saveReportToStorage);
-        text(page,"DNS идёт через VPN при подключении. Kill switch отсутствует: после отключения или остановки приложения работает обычный интернет. IPv6 в этой версии блокируется на время VPN.",15);
+        button(page,"Дата и время Android",()->{
+            try{startActivity(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS));}
+            catch(ActivityNotFoundException|SecurityException e){
+                try{startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS));}
+                catch(ActivityNotFoundException|SecurityException missing){message.setText("Не удалось открыть системные настройки. Проверьте дату и время через меню устройства.");}
+            }
+        });
+        text(page,"DNS идёт через VPN при подключении. IP сервера exit исключён из VPN-маршрутов для всех приложений и портов. Kill switch отсутствует: после отключения или остановки приложения работает обычный интернет. IPv6 в этой версии блокируется на время VPN.",15);
         setContentView(scroll);loadSummary();(configured?connect:fileImport).requestFocus();
     }
     private void loadSummary(){
@@ -98,7 +107,7 @@ public final class MainActivity extends Activity {
         boolean busy=VpnClientService.busy(),permissionPending=consent.pending();
         status.setText(VpnClientService.label(VpnClientService.state));
         status.setTextColor(VpnClientService.state.equals("ready")?Color.rgb(65,214,195):Color.WHITE);
-        counters.setText("Пакеты ↑ "+VpnClientService.tx+"   ↓ "+VpnClientService.rx);
+        counters.setText("Пакеты ↑ "+VpnClientService.tx+"   ↓ "+VpnClientService.rx+"\nВремя устройства (UTC): "+deviceTime.format(new java.util.Date()));
         connect.setText(permissionPending?"Ожидание разрешения Android…":busy?"Отключить":"Подключить");
         connect.setEnabled(!permissionPending&&!importing&&(busy||configured)&&!VpnClientService.state.equals("stopping"));
         fileImport.setEnabled(!permissionPending&&!busy&&!importing);pasteImport.setEnabled(!permissionPending&&!busy&&!importing);

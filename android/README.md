@@ -110,7 +110,7 @@ Java `VpnService` создаёт TUN, маршруты и DNS. JNI переда�
 не открывает Linux TUN и не создаёт DNS listener. SIGPIPE блокируется только
 на native worker и восстанавливается при выходе. Стек worker — 2 МиБ.
 
-59 JVM-тестов проверяют оба формата bundle, combo→boring, пути, base64,
+65 JVM-тестов проверяют оба формата bundle, combo→boring, пути, base64,
 размеры/глубину JSON, адреса/DNS, профиль, отмену загрузки native-библиотеки,
 публикацию импорта, откат ошибок импорта/выбора/удаления конфигурации и настройки
 TLS-профиля, ограничение HTTPS-проверки, цикл разрешения VPN и запись отчёта
@@ -217,3 +217,40 @@ Android фактически используемую сеть; изменени
 и `local_address` сокета; перечень сетей содержит адреса интерфейсов. До завершения
 connect Java может показывать wildcard/unknown local address. Отчёт содержит
 локальные сетевые адреса, но не Wi-Fi-пароли или ключи VPN.
+
+В 0.1.7 устранён захват outer exit-соединения маршрутами самого VPN:
+`0.0.0.0/0` заменён CIDR-покрытием IPv4 **без адреса exit /32**. На Android 6
+нет `excludeRoute`, поэтому используются обычные `Builder.addRoute`; для
+текущего exit это 32 маршрута. Loopback остаётся системным; CIDR с базовым
+loopback-адресом, который API 23 запрещает, не передаётся Builder.
+Исключение exit действует **для всех приложений и всех портов этого IP**.
+Соседние IP, публичный DNS и прочие внешние назначения остаются в VPN.
+DNS, совпадающий с exit, запрещён и для явного списка, и для defaults.
+
+Outer TCP дополнительно привязывается к IPv4-адресу выбранной физической сети
+через `Socket.bind`, наряду с `protect` и `Network.bindSocket`. Если у carrier
+нет подходящего IPv4 или он совпал с адресом TUN, попытка не выполняется.
+После смены сети адрес выбирается заново. Native endpoint обязан совпадать
+с endpoint enrollment, по которому сформированы VPN-маршруты.
+
+Часы Android тоже важны: CA и временное окно PSK проверяются как прежде.
+В UI показано время UTC и есть кнопка «Дата и время Android»; она открывает
+системные настройки, сама время не меняет. Если соответствующего экрана
+прошивки нет, используется общее меню настроек. Включить автоматическую
+дату/время или установить правильные значения; одной смены часового пояса
+недостаточно для исправления неверного UTC.
+
+Маршрутный regression использует код приложения, а затем реальные Linux
+network namespaces внутри disposable privileged-контейнера с `--network none`:
+
+```sh
+javac -d /tmp/cvpn-route-classes android/app/src/main/java/org/meshpn/client/TcpProbe.java \
+  android/app/src/main/java/org/meshpn/client/Ipv4Routes.java android/test-fixtures/RoutePlan.java
+java -cp /tmp/cvpn-route-classes org.meshpn.client.RoutePlan 84.201.14.124 > /tmp/exit-routes.txt
+# Следующее выполняется только внутри такого контейнера, с копиями script/routes:
+CVPN_ISOLATED_LAB=1 node scripts/test-android-exit-route-lab.mjs /tmp/exit-routes.txt
+```
+
+Тест воспроизводит timeout с исходным TUN-IP и проверяет успешный TCP с
+физического IP после исключения exit, сохраняя маршруты DNS/соседей через TUN.
+Это проверка маршрутов Linux, не реализация netd конкретной Android-прошивки.

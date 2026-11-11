@@ -68,6 +68,12 @@ public class EnrollmentTest {
         }
         rejected(bundle().put("android_dns",new JSONArray()));rejected(bundle().put("android_dns","1.1.1.1"));
     }
+    @Test public void defaultDnsCannotEqualExcludedExit() throws Exception {
+        for(String exit:new String[]{"1.1.1.1","8.8.8.8"}){
+            JSONObject b=bundle();b.getJSONObject("config").put("address",exit);rejected(b);
+            b.put("android_dns",new JSONArray().put("9.9.9.9"));assertNotNull(new Enrollment(b.toString()));
+        }
+    }
     @Test public void decoderRoundTripsEveryByteAndPadding() throws Exception {
         for(int size=1;size<=256;size++){
             byte[] bytes=new byte[size];for(int i=0;i<size;i++)bytes[i]=(byte)i;

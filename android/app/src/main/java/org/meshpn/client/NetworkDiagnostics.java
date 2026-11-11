@@ -20,6 +20,17 @@ final class NetworkDiagnostics {
         }
         return UplinkSelection.choose(active,candidates);
     }
+    static java.net.InetAddress physicalIpv4(Context context,Network network){
+        ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if(!physical(cm.getNetworkCapabilities(network)))return null;
+        LinkProperties link=cm.getLinkProperties(network);if(link==null)return null;
+        for(LinkAddress item:link.getLinkAddresses()){
+            java.net.InetAddress address=item.getAddress();
+            if(address instanceof java.net.Inet4Address&&!address.isAnyLocalAddress()&&!address.isLoopbackAddress()
+                &&!address.isLinkLocalAddress()&&!address.isMulticastAddress())return address;
+        }
+        return null;
+    }
     static String snapshot(Context context){
         StringBuilder out=new StringBuilder();
         try{

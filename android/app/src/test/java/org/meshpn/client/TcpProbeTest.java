@@ -66,4 +66,14 @@ public class TcpProbeTest {
             assertFalse(r.toString().contains("private"));
         }
     }
+    @Test public void explicitSourceBindIsUsedByActualTcpConnection() throws Exception {
+        try(ServerSocket listener=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"))){
+            listener.setSoTimeout(1000);
+            TcpProbe.Result r=TcpProbe.run("127.0.0.1",listener.getLocalPort(),1000,s->{
+                s.bind(new InetSocketAddress(TcpProbe.numericAddress("127.0.0.1"),0));return true;
+            },()->false);
+            assertTrue(r.toString(),r.ok());assertEquals("127.0.0.1",r.localAddress);
+            try(Socket incoming=listener.accept()){assertEquals(r.localPort,incoming.getPort());}
+        }
+    }
 }

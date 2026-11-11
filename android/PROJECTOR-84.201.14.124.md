@@ -1,6 +1,6 @@
 # Агенту: установить APK и разложить настройки на ФС Android
 
-Комплект 2026-11-12: APK **0.1.6**, Android TV 6/API 23+, ARMv7.
+Комплект 2026-11-12: APK **0.1.7**, Android TV 6/API 23+, ARMv7.
 Exit `84.201.14.124:443`; отдельный клиент **projector-android / 10.99.0.5**.
 Транспорт `boring-tls`; TLS-имя `personal-cert.internal`; SNI `www.trustpilot.com`.
 Профиль `chromium-156-bounded-cold-v1` включён. DNS `1.1.1.1`, `8.8.8.8`
@@ -8,7 +8,7 @@ Exit `84.201.14.124:443`; отдельный клиент **projector-android / 
 
 ## Содержимое
 
-- `clean-vpn-0.1.6-armv7.apk` — готовое приложение.
+- `clean-vpn-0.1.7-armv7.apk` — готовое приложение.
 - `android-private/` — готовое дерево приватных файлов приложения: `ca.pem`,
   `psk`, `profile.json`, `bundle.json`, `engine.json`, `engine-base.json`,
   `shared_prefs/settings.xml`. В `client-id.txt` записано имя каталога UUID.
@@ -33,6 +33,12 @@ bundle и private directory не печатать в логи, не коммит
 её можно скопировать файловым менеджером либо через «Выбрать файл» в диагностике.
 Системный logcat и причина сбоя чужого процесса в этот отчёт не входят.
 
+Перед подключением в 0.1.7 проверить часы через кнопку «Дата и время Android»:
+в отчёте 0.1.6 часы отставали. Включить автоматическую дату/время либо выставить
+правильные значения; без этого после TCP возможна ошибка `auth_clock_skew`.
+IP exit исключён из VPN-маршрутов для всех приложений/портов; остальные внешние
+IPv4, включая DNS, захватываются. Source IPv4 берётся из физической сети.
+
 Далее — только для первоначальной установки с доступом к ФС Android.
 Агент работает своим доступным способом с ФС/консолью Android. Для прямой
 записи в private directory нужен **root**; само VPN-приложение работает без root.
@@ -43,7 +49,7 @@ bundle и private directory не печатать в логи, не коммит
    Проверить `SHA256SUMS` на компьютере через `sha256sum -c SHA256SUMS`
    (macOS: `shasum -a 256 -c SHA256SUMS`). Проверить Android API >=23,
    поддержку `armeabi-v7a` и правильные дату/время устройства.
-2. Установить APK штатным package manager: `pm install -r clean-vpn-0.1.6-armv7.apk`.
+2. Установить APK штатным package manager: `pm install -r clean-vpn-0.1.7-armv7.apk`.
    Не удалять существующее приложение при ошибке подписи. Затем остановить его:
    `am force-stop org.meshpn.client`.
 3. Дерево подготовлено **для основного Android user 0** и package

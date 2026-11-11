@@ -111,9 +111,11 @@ final class Enrollment {
         if (root.has("android_dns") && servers == null) throw new Exception("android_dns должен быть массивом");
         if (servers != null && (servers.length() < 1 || servers.length() > 3)) throw new Exception("Нужно 1–3 DNS-сервера");
         dns = servers == null ? new String[]{"1.1.1.1", "8.8.8.8"} : new String[servers.length()];
-        if (servers != null) for (int i=0;i<dns.length;i++) {
-            Object v=servers.get(i); if (!(v instanceof String) || !ipv4((String)v)) throw new Exception("DNS должен быть числовым IPv4");
-            dns[i]=(String)v;
+        for (int i=0;i<dns.length;i++) {
+            if(servers!=null){
+                Object v=servers.get(i); if (!(v instanceof String) || !ipv4((String)v)) throw new Exception("DNS должен быть числовым IPv4");
+                dns[i]=(String)v;
+            }
             int first=Integer.parseInt(dns[i].split("\\.")[0]);
             if(first==0||first==127||first>=224||dns[i].equals(peer)||dns[i].equals(address)) throw new Exception("DNS должен быть доступен через exit");
         }

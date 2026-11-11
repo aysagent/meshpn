@@ -23,6 +23,7 @@ public final class VpnClientService extends VpnService {
     private static final ArrayDeque<String> history=new ArrayDeque<>();
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile EngineSession session;
+    private volatile Enrollment sessionConfig;
     private final AtomicLong networkGeneration=new AtomicLong();
     private boolean destroyed;
     private ConnectivityManager connectivity;
@@ -122,6 +123,7 @@ public final class VpnClientService extends VpnService {
         try{
             final Enrollment config;final File engine;
             synchronized(ConfigStore.class){config=ConfigStore.load(this);engine=ConfigStore.engine(this);}
+            sessionConfig=config;
             long handle=current.open();
             if(handle==0||current.stopped()){terminal="stopped";return;}
             // Check files/profile before capturing any application traffic.
@@ -135,7 +137,10 @@ public final class VpnClientService extends VpnService {
             tcpCheck(current,config,"before_tun_protected",null);
             if(current.stopped()){terminal="stopped";return;}
             terminal="vpn_interface_failed";
-            Builder b=new Builder().setSession("Clean VPN · "+config.name).setMtu(1280).addAddress(config.peer,32).addRoute("0.0.0.0",0);
+            Builder b=new Builder().setSession("Clean VPN · "+config.name).setMtu(1280).addAddress(config.peer,32);
+            java.util.List<Ipv4Routes.Route> routes=Ipv4Routes.excluding(config.address);
+            for(Ipv4Routes.Route route:routes)b.addRoute(route.address,route.prefix);
+            connectionChecks+="VPN IPv4 routes="+routes.size()+" excluded_exit="+config.address+"/32 (all ports)\n";
             Network uplink=NetworkDiagnostics.physicalNetwork(this);
             b.setUnderlyingNetworks(uplink==null?new Network[0]:new Network[]{uplink});
             for(String dns:config.dns)b.addDnsServer(dns);
@@ -193,6 +198,10 @@ public final class VpnClientService extends VpnService {
     public int connectSocket(String address,int port){
         final EngineSession current=session;
         if(current==null||current.stopped())return -2;
+        final Enrollment config=sessionConfig;
+        if(config==null||!config.address.equals(address)||config.port!=port){
+            lastNativeConnect="engine_endpoint_mismatch";log(lastNativeConnect);return -1;
+        }
         final long generation=networkGeneration.get();
         final ParcelFileDescriptor[] wrapper={null},owned={null};
         try{
@@ -200,6 +209,10 @@ public final class VpnClientService extends VpnService {
             if(uplink==null){
                 setUnderlyingNetworks(new Network[0]);
                 lastNativeConnect="native_endpoint="+address+":"+port+" no_physical_uplink";log(lastNativeConnect);return -1;
+            }
+            final java.net.InetAddress source=NetworkDiagnostics.physicalIpv4(this,uplink);
+            if(source==null||source.getHostAddress().equals(config.peer)){
+                lastNativeConnect="no_usable_physical_ipv4 network="+uplink;log(lastNativeConnect);return -1;
             }
             // The system default can now be tun0. Select the actual carrier for
             // EACH new socket, not just for the early post-establish diagnostic.
@@ -212,6 +225,9 @@ public final class VpnClientService extends VpnService {
                 if(ok)socketsProtected.incrementAndGet();else socketsRefused.incrementAndGet();
                 if(!ok)return false;
                 uplink.bindSocket(socket);
+                // Some OEM routing ignores a successful Network bind once the
+                // VPN is fully installed. Never let the outer TCP choose tun0's IP.
+                socket.bind(new java.net.InetSocketAddress(source,0));
                 bound[0]=true;
                 return true;
             },()->current.stopped()||networkGeneration.get()!=generation,socket->{
@@ -221,7 +237,8 @@ public final class VpnClientService extends VpnService {
                 if(wrapper[0]==null)throw new java.io.IOException();
                 owned[0]=wrapper[0].dup();
             });
-            lastNativeConnect="native_endpoint="+address+":"+port+" network="+uplink+" explicit_bind="+bound[0]+" android_tcp: "+result;
+            lastNativeConnect="native_endpoint="+address+":"+port+" network="+uplink+" source_ipv4="+source.getHostAddress()
+                +" explicit_bind="+bound[0]+" android_tcp: "+result;
             log(lastNativeConnect);
             if(current.stopped()||networkGeneration.get()!=generation||result.code.equals("cancelled"))return -2;
             if(result.code.equals("socket_prepare_refused"))return -4;
