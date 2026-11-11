@@ -47,4 +47,23 @@ public class TcpProbeTest {
         for(int timeout:new int[]{0,-1,10001})assertFalse(TcpProbe.run("127.0.0.1",443,timeout,s->true,()->false).ok());
         assertEquals("endpoint",TcpProbe.run("127.0.0.1",65536,1000,s->true,()->false).stage);
     }
+    @Test public void handoffReceivesConnectedSocketBeforeJavaClose() throws Exception {
+        final Socket[] handed=new Socket[1];
+        try(ServerSocket listener=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"))){
+            TcpProbe.Result r=TcpProbe.run("127.0.0.1",listener.getLocalPort(),1000,s->true,()->false,s->{
+                assertTrue(s.isConnected());assertFalse(s.isClosed());handed[0]=s;
+            });
+            assertTrue(r.toString(),r.ok());assertTrue(handed[0].isClosed());
+        }
+    }
+    @Test public void failedHandoffClosesSocketAndDoesNotExposeException() throws Exception {
+        final Socket[] handed=new Socket[1];
+        try(ServerSocket listener=new ServerSocket(0,1,InetAddress.getByName("127.0.0.1"))){
+            TcpProbe.Result r=TcpProbe.run("127.0.0.1",listener.getLocalPort(),1000,s->true,()->false,s->{
+                handed[0]=s;throw new IOException("private handoff data");
+            });
+            assertFalse(r.ok());assertEquals("handoff",r.stage);assertTrue(handed[0].isClosed());
+            assertFalse(r.toString().contains("private"));
+        }
+    }
 }

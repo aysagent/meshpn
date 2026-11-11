@@ -6,6 +6,7 @@ import java.nio.channels.*;
 /** TCP only: numeric IPv4 endpoint, no DNS, TLS, credentials or payload. */
 final class TcpProbe {
     interface Prepare { boolean socket(Socket socket) throws Exception; }
+    interface Connected { void socket(Socket socket) throws Exception; }
     interface Stopped { boolean get(); }
     static final class Result {
         final String code,stage;
@@ -26,6 +27,11 @@ final class TcpProbe {
         return InetAddress.getByAddress(bytes);
     }
     static Result run(String address,int port,int timeoutMs,Prepare prepare,Stopped stopped){
+        return run(address,port,timeoutMs,prepare,stopped,socket->{});
+    }
+    // A recipient may duplicate the connected descriptor here. The Java socket
+    // always closes before return; ownership of any duplicate stays with recipient.
+    static Result run(String address,int port,int timeoutMs,Prepare prepare,Stopped stopped,Connected recipient){
         long start=System.nanoTime();String stage="endpoint";int local=0;
         try{
             if(timeoutMs<1||timeoutMs>10000)throw new IllegalArgumentException();
@@ -48,6 +54,8 @@ final class TcpProbe {
                     connected=channel.finishConnect();
                 }
                 local=channel.socket().getLocalPort();
+                if(stopped.get())return result("cancelled",stage,start,local);
+                stage="handoff";recipient.socket(channel.socket());
                 return result("tcp_connected",stage,start,local);
             }
         }catch(Exception e){return result(e.getClass().getSimpleName(),stage,start,local);}

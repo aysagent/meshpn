@@ -1161,12 +1161,18 @@ int main(int argc,char** argv){
       bool authenticated=false;
       try{
         auto deadline=Clock::now()+std::chrono::seconds(10);auto generation=ctl.generation;
-        socket_fd.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(socket_fd.n>=0,"connect_socket");auto addr=endpoint(c);
 #ifdef CVPN_ANDROID
-        check(android_runtime->protect(socket_fd.n),"android_socket_protect");
-#endif
+        ctl.set("connecting");socket_fd.n=android_runtime->connect(c.address,c.port);
+        check(socket_fd.n!=-2,"cancelled");check(socket_fd.n!=-3,"connect_deadline");
+        check(socket_fd.n!=-4,"android_socket_protect");check(socket_fd.n>=0,"connect");
+        nonblock(socket_fd.n);
+        check(fcntl(socket_fd.n,F_SETFD,FD_CLOEXEC)==0,"connect_socket");
+        ctl.read_commands();check(!ctl.stop&&ctl.generation==generation,"cancelled");
+#else
+        socket_fd.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(socket_fd.n>=0,"connect_socket");auto addr=endpoint(c);
         ctl.set("connecting");int rc=connect(socket_fd.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr));
         if(rc<0){check(errno==EINPROGRESS,"connect");wait_fd(socket_fd.n,POLLOUT,ctl,Clock::now()+std::chrono::seconds(3),generation);int err=0;socklen_t size=sizeof(err);check(getsockopt(socket_fd.n,SOL_SOCKET,SO_ERROR,&err,&size)==0&&err==0,"connect");}
+#endif
         int no_delay=1;
         check(setsockopt(socket_fd.n,IPPROTO_TCP,TCP_NODELAY,&no_delay,sizeof(no_delay))==0,"tcp_nodelay");
         std::unique_ptr<SSL,decltype(&SSL_free)> ssl(SSL_new(ctx.get()),SSL_free);check(bool(ssl)&&SSL_set_fd(ssl.get(),socket_fd.n)==1,"tls_socket");

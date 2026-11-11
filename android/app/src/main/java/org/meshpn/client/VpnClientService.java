@@ -9,6 +9,7 @@ import java.io.File;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class VpnClientService extends VpnService {
     static final String START="org.meshpn.client.START", STOP="org.meshpn.client.STOP";
@@ -17,10 +18,12 @@ public final class VpnClientService extends VpnService {
     static volatile String state="stopped", lastError="";
     static volatile long tx=0,rx=0,connectionEpoch=0;
     static volatile String connectionChecks="No connection checks yet";
+    static volatile String lastNativeConnect="Not attempted";
     static final AtomicInteger socketsProtected=new AtomicInteger(),socketsRefused=new AtomicInteger();
     private static final ArrayDeque<String> history=new ArrayDeque<>();
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile EngineSession session;
+    private final AtomicLong networkGeneration=new AtomicLong();
     private boolean destroyed;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networks;
@@ -83,7 +86,7 @@ public final class VpnClientService extends VpnService {
         synchronized(ConfigStore.class){acquired=owner.compareAndSet(null,next);}
         if(!acquired){stopSelf();return START_NOT_STICKY;}
         session=next;lastError="";tx=rx=0;state="starting";++connectionEpoch;
-        connectionChecks="Checks pending";socketsProtected.set(0);socketsRefused.set(0);
+        connectionChecks="Checks pending";lastNativeConnect="Not attempted";socketsProtected.set(0);socketsRefused.set(0);
         boolean workerStarted=false;
         try {
             startForeground(1,notification());
@@ -103,8 +106,8 @@ public final class VpnClientService extends VpnService {
         try{
             connectivity=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
             networks=new ConnectivityManager.NetworkCallback(){
-                @Override public void onAvailable(Network n){current.networkChanged();}
-                @Override public void onLost(Network n){current.networkChanged();}
+                @Override public void onAvailable(Network n){networkGeneration.incrementAndGet();current.networkChanged();}
+                @Override public void onLost(Network n){networkGeneration.incrementAndGet();current.networkChanged();}
             };
             connectivity.registerNetworkCallback(new NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(),networks);
@@ -183,12 +186,38 @@ public final class VpnClientService extends VpnService {
         }
         if(!destroyed){stopForeground(true);stopSelf();}
     }
-    // Called on the native worker, before connect(), including every retry.
-    public boolean protectSocket(int socket){
-        EngineSession s=session;boolean ok=false;
-        try{ok=s!=null&&!s.stopped()&&protect(socket);}catch(Exception ignored){}
-        if(ok)socketsProtected.incrementAndGet();else socketsRefused.incrementAndGet();
-        return ok;
+    // JNI calls on the engine worker for EVERY attempt. TLS and all payload
+    // remain native; Android handles only protected, cancellable TCP setup.
+    public int connectSocket(String address,int port){
+        final EngineSession current=session;
+        if(current==null||current.stopped())return -2;
+        final long generation=networkGeneration.get();
+        final ParcelFileDescriptor[] wrapper={null},owned={null};
+        try{
+            TcpProbe.Result result=TcpProbe.run(address,port,3000,socket->{
+                boolean ok=protect(socket);
+                if(ok)socketsProtected.incrementAndGet();else socketsRefused.incrementAndGet();
+                return ok;
+            },()->current.stopped()||networkGeneration.get()!=generation,socket->{
+                // Before API 29 fromSocket BORROWS the original descriptor.
+                // Always dup explicitly and keep wrapper alive through Java close.
+                wrapper[0]=ParcelFileDescriptor.fromSocket(socket);
+                if(wrapper[0]==null)throw new java.io.IOException();
+                owned[0]=wrapper[0].dup();
+            });
+            lastNativeConnect="native_endpoint="+address+":"+port+" android_tcp: "+result;
+            log(lastNativeConnect);
+            if(current.stopped()||networkGeneration.get()!=generation||result.code.equals("cancelled"))return -2;
+            if(result.code.equals("socket_prepare_refused"))return -4;
+            if(result.code.equals("tcp_timeout"))return -3;
+            if(!result.ok()||owned[0]==null)return -1;
+            // C++ owns this descriptor, including every failure/cancellation path.
+            return owned[0].detachFd();
+        }catch(Exception e){lastNativeConnect="android_tcp_handoff: "+e.getClass().getSimpleName();return -1;}
+        finally{
+            if(owned[0]!=null)try{owned[0].close();}catch(Exception ignored){}
+            if(wrapper[0]!=null)try{wrapper[0].close();}catch(Exception ignored){}
+        }
     }
     public void onNativeEvent(String line){
         final EngineSession current=session;

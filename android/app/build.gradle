@@ -9,8 +9,8 @@ android {
         minSdk 23
         // Local installation, including Android TV 6. No Play publication.
         targetSdk 28
-        versionCode 5
-        versionName '0.1.4'
+        versionCode 6
+        versionName '0.1.5'
         ndk { abiFilters 'armeabi-v7a' }
         externalNativeBuild {
             cmake {

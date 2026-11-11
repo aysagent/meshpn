@@ -15,7 +15,10 @@ struct AndroidRuntime {
   std::atomic<uint64_t> network_generation{0};
   std::atomic<bool> running{false};
   int tun_fd=-1;
-  std::function<bool(int)> protect;
+  // Host establishes a protected TCP connection. Returns an owned connected FD
+  // (caller closes), or -1 failed, -2 cancelled, -3 timeout, -4 protect refused.
+  // Must be bounded and observe stop/network_generation during connect.
+  std::function<int(const std::string&,uint16_t)> connect;
   std::function<void(const std::string&)> event;
 };
 extern thread_local AndroidRuntime* android_runtime;

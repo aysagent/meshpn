@@ -58,14 +58,17 @@ Java_org_meshpn_client_NativeBridge_run(JNIEnv* env,jclass,jlong id,jstring path
   try{
     Binding binding(runtime.get());
     jclass cls=env->GetObjectClass(service);
-    const auto protect=env->GetMethodID(cls,"protectSocket","(I)Z");
+    const auto connect=env->GetMethodID(cls,"connectSocket","(Ljava/lang/String;I)I");
     const auto event=env->GetMethodID(cls,"onNativeEvent","(Ljava/lang/String;)V");
     env->DeleteLocalRef(cls);
-    if(!protect||!event)throw std::runtime_error("callbacks");
+    if(!connect||!event)throw std::runtime_error("callbacks");
     runtime->tun_fd=tun;
-    runtime->protect=[&](int fd){
-      const bool ok=env->CallBooleanMethod(service,protect,fd);
-      if(env->ExceptionCheck()){env->ExceptionClear();return false;}return ok;
+    runtime->connect=[&](const std::string& address,uint16_t port){
+      auto value=env->NewStringUTF(address.c_str());
+      if(!value){env->ExceptionClear();return -1;}
+      const int fd=env->CallIntMethod(service,connect,value,int(port));
+      env->DeleteLocalRef(value);
+      if(env->ExceptionCheck()){env->ExceptionClear();return -1;}return fd;
     };
     runtime->event=[&](const std::string& line){
       auto value=env->NewStringUTF(line.c_str());
@@ -75,5 +78,5 @@ Java_org_meshpn_client_NativeBridge_run(JNIEnv* env,jclass,jlong id,jstring path
     };
     result=invoke("--config",utf(env,path));
   }catch(...){if(env->ExceptionCheck())env->ExceptionClear();}
-  runtime->event={};runtime->protect={};runtime->running=false;return result;
+  runtime->event={};runtime->connect={};runtime->running=false;return result;
 }

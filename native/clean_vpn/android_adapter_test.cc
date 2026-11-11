@@ -4,6 +4,7 @@
 #include "protocol.hpp"
 #include <nlohmann/json.hpp>
 #include <sys/socket.h>
+#include <arpa/inet.h>
 #include <sys/wait.h>
 #include <poll.h>
 #include <fcntl.h>
@@ -39,12 +40,33 @@ struct Exit {
 struct Client {
   AndroidRuntime runtime;std::thread worker;int packet=-1;std::atomic<int> protections{0};int result=-1;
   std::mutex mutex;std::condition_variable changed;std::map<std::string,int> states;
-  explicit Client(const char* path,bool protect_ok=true){
+  std::vector<int> handed_fds;
+  explicit Client(const char* path,int connect_error=0,bool cancel_handoff=false){
     int pk[2];need(socketpair(AF_UNIX,SOCK_DGRAM,0,pk)==0,"client_pair");packet=pk[0];runtime.tun_fd=pk[1];
-    runtime.protect=[this,protect_ok](int fd){
-      sockaddr_storage address{};socklen_t length=sizeof(address);
-      need(getpeername(fd,reinterpret_cast<sockaddr*>(&address),&length)<0&&errno==ENOTCONN,"protect_before_connect");
-      ++protections;return protect_ok;
+    runtime.connect=[this,connect_error,cancel_handoff](const std::string& address,uint16_t port){
+      ++protections;if(connect_error)return connect_error;
+      const auto generation=runtime.network_generation.load();
+      int fd=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);need(fd>=0,"host_socket");
+      struct Owned {int fd;~Owned(){close(fd);}} owned{fd};
+      sockaddr_in remote{};remote.sin_family=AF_INET;remote.sin_port=htons(port);
+      need(inet_pton(AF_INET,address.c_str(),&remote.sin_addr)==1,"host_endpoint");
+      int rc=::connect(fd,reinterpret_cast<sockaddr*>(&remote),sizeof(remote));
+      if(rc<0&&errno!=EINPROGRESS)return -1;
+      auto deadline=Clock::now()+std::chrono::seconds(3);
+      while(rc<0){
+        if(runtime.stop||runtime.network_generation!=generation)return -2;
+        if(Clock::now()>=deadline)return -3;
+        pollfd p{fd,POLLOUT,0};if(poll(&p,1,25)<=0)continue;
+        int error=0;socklen_t size=sizeof(error);
+        if(getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&size)<0||error)return -1;
+        break;
+      }
+      // Model Java/PFD handoff: duplicate, close original before engine TLS.
+      int transferred=dup(fd);need(transferred>=0,"host_dup");handed_fds.push_back(transferred);
+      // Engine must normalize a host-provided descriptor to nonblocking mode.
+      need(fcntl(transferred,F_SETFL,fcntl(transferred,F_GETFL)&~O_NONBLOCK)==0,"host_blocking_fd");
+      if(cancel_handoff)runtime.stop=true;
+      return transferred;
     };
     runtime.event=[this](const std::string& line){
       auto j=json::parse(line);
@@ -67,6 +89,7 @@ struct Client {
     const auto start=Clock::now();runtime.stop=true;worker.join();
     need(result==0,"stop_result");need(Clock::now()-start<std::chrono::seconds(2),"bounded_stop");
     need(fcntl(runtime.tun_fd,F_GETFD)>=0,"borrowed_tun_owned_by_host");
+    for(int fd:handed_fds)need(fcntl(fd,F_GETFD)<0&&errno==EBADF,"transferred_socket_closed");
   }
 };
 static Bytes packet(bool reverse,unsigned seed,bool dns=false){
@@ -104,15 +127,25 @@ int main(int argc,char** argv){
       transfer(client.packet,server.packet,packet(false,99));transfer(server.packet,client.packet,packet(true,99));client.stop();
     }
     {
-      Client denied(argv[2],false);denied.await("android_socket_protect");
+      Client denied(argv[2],-4);denied.await("android_socket_protect");
       {std::lock_guard<std::mutex> lock(denied.mutex);need(denied.states["handshake"]==0,"no_unprotected_tls");}
       denied.stop();
+    }
+    for(const auto& error:std::map<int,std::string>{{-1,"connect"},{-2,"cancelled"},{-3,"connect_deadline"}}){
+      Client failed(argv[2],error.first);failed.await(error.second);
+      {std::lock_guard<std::mutex> lock(failed.mutex);need(failed.states["handshake"]==0,"no_tls_after_connect_failure");}
+      failed.stop();
+    }
+    {
+      Client cancelled(argv[2],0,true);cancelled.await("cancelled");cancelled.stop();
+      need(!cancelled.handed_fds.empty(),"cancelled_handoff_exercised");
+      need(cancelled.states["handshake"]==0,"no_tls_after_cancelled_handoff");
     }
     // Repeat after teardown: no process-global stop flag or stale descriptors.
     {Client client(argv[2]);client.await("ready");client.stop();}
     sigaction(SIGPIPE,nullptr,&after);need(before.sa_handler==after.sa_handler,"process_signal_unchanged");
     need(fcntl(0,F_GETFL)==stdin_flags&&fcntl(1,F_GETFL)==stdout_flags,"stdio_flags_unchanged");
-    std::cout<<"android adapter PASS: packets/DNS-port traffic, reconnect/protect, denied protect, stop/restart, borrowed FD, SIGPIPE isolation\n";
+    std::cout<<"android adapter PASS: packets/DNS-port traffic, reconnect/protect, host TCP errors, cancelled handoff, socket ownership/nonblocking, stop/restart, borrowed TUN, SIGPIPE isolation\n";
     return 0;
   }catch(const std::exception& e){std::cerr<<"android adapter FAIL: "<<e.what()<<"\n";return 1;}
 }

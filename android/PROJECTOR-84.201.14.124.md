@@ -1,6 +1,6 @@
 # Агенту: установить APK и разложить настройки на ФС Android
 
-Комплект 2026-11-12: APK **0.1.4**, Android TV 6/API 23+, ARMv7.
+Комплект 2026-11-12: APK **0.1.5**, Android TV 6/API 23+, ARMv7.
 Exit `84.201.14.124:443`; отдельный клиент **projector-android / 10.99.0.5**.
 Транспорт `boring-tls`; TLS-имя `personal-cert.internal`; SNI `www.trustpilot.com`.
 Профиль `chromium-156-bounded-cold-v1` включён. DNS `1.1.1.1`, `8.8.8.8`
@@ -8,7 +8,7 @@ Exit `84.201.14.124:443`; отдельный клиент **projector-android / 
 
 ## Содержимое
 
-- `clean-vpn-0.1.4-armv7.apk` — готовое приложение.
+- `clean-vpn-0.1.5-armv7.apk` — готовое приложение.
 - `android-private/` — готовое дерево приватных файлов приложения: `ca.pem`,
   `psk`, `profile.json`, `bundle.json`, `engine.json`, `engine-base.json`,
   `shared_prefs/settings.xml`. В `client-id.txt` записано имя каталога UUID.
@@ -43,7 +43,7 @@ bundle и private directory не печатать в логи, не коммит
    Проверить `SHA256SUMS` на компьютере через `sha256sum -c SHA256SUMS`
    (macOS: `shasum -a 256 -c SHA256SUMS`). Проверить Android API >=23,
    поддержку `armeabi-v7a` и правильные дату/время устройства.
-2. Установить APK штатным package manager: `pm install -r clean-vpn-0.1.4-armv7.apk`.
+2. Установить APK штатным package manager: `pm install -r clean-vpn-0.1.5-armv7.apk`.
    Не удалять существующее приложение при ошибке подписи. Затем остановить его:
    `am force-stop org.meshpn.client`.
 3. Дерево подготовлено **для основного Android user 0** и package
