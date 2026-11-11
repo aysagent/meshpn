@@ -1,0 +1,46 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'org.meshpn.client'
+    compileSdk 35
+    ndkVersion '27.2.12479018'
+    defaultConfig {
+        applicationId 'org.meshpn.client'
+        minSdk 23
+        // Local installation, including Android TV 6. No Play publication.
+        targetSdk 28
+        versionCode 1
+        versionName '0.1.0'
+        ndk { abiFilters 'armeabi-v7a' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static', '-DCMAKE_BUILD_TYPE=Release',
+                    "-DCVPN_BORINGSSL_SOURCE=${rootProject.projectDir}/.tools/deps/_deps/boringssl-src",
+                    "-DCVPN_JSON_SOURCE=${rootProject.projectDir}/.tools/deps/_deps/json-src"
+                targets 'cvpn_android'
+            }
+        }
+    }
+    externalNativeBuild { cmake { path '../../native/clean_vpn/CMakeLists.txt'; version '3.22.1' } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    signingConfigs {
+        localRelease {
+            def directory = new File(rootProject.projectDir, '.tools/signing')
+            def passwordFile = new File(directory, 'password')
+            if (passwordFile.exists()) {
+                storeFile new File(directory, 'release.p12')
+                storePassword passwordFile.text.trim()
+                keyAlias 'clean-vpn'
+                keyPassword passwordFile.text.trim()
+            }
+        }
+    }
+    buildTypes { release { minifyEnabled false; signingConfig signingConfigs.localRelease } }
+    testOptions { unitTests.returnDefaultValues = true }
+    lint { lintConfig file('lint.xml') }
+}
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+}

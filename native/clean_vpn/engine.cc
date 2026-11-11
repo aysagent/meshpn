@@ -11,6 +11,9 @@
 #include "transparent_credentials.hpp"
 #include "tls_profile.hpp"
 #include "http2_alps.hpp"
+#ifdef CVPN_ANDROID
+#include "android_platform.hpp"
+#endif
 #ifdef CVPN_TEST_PACKET_FD
 #include "certificate_compression_fixture.hpp"
 #include "signature_fixture.hpp"
@@ -232,6 +235,10 @@ struct Control {
     if(event=="status"&&h2_budget_fixture::enabled())record["fixture_h2_budget"]=h2_budget_fixture::status();
 #endif
     std::string line=record.dump()+"\n";
+#ifdef CVPN_ANDROID
+    android_runtime->event(line);
+    return;
+#endif
     // Events are smaller than PIPE_BUF; a blocked supervisor cannot retain data.
     ssize_t n=write(STDOUT_FILENO,line.data(),line.size());
     if(n!=ssize_t(line.size())) stop=true;
@@ -258,9 +265,21 @@ struct Control {
     inet_ntop(AF_INET,packet.data()+12,src,sizeof(src));inet_ntop(AF_INET,packet.data()+16,dst,sizeof(dst));
     auto line=json({{"version",1},{"event","peer_address_rejected"},{"role",client?"client":"exit"},
       {"source",src},{"destination",dst},{"protocol",packet[9]}}).dump()+"\n";
+#ifdef CVPN_ANDROID
+    android_runtime->event(line);
+#else
     if(write(STDOUT_FILENO,line.data(),line.size())!=ssize_t(line.size()))stop=true;
+#endif
   }
   void read_commands() {
+#ifdef CVPN_ANDROID
+    if(android_runtime->stop.load())stop=true;
+    const auto next=android_runtime->network_generation.load();
+    if(next!=generation){generation=next;set("network_changed");}
+    if(Clock::now()-diagnostics_at>=std::chrono::seconds(1)){
+      diagnostics_at=Clock::now();emit("diagnostics");
+    }
+#endif
     if(interrupted||dns_failed||(branch_failed&&branch_failed->load()))stop=true;
     if(notify&&diagnostic_provider&&Clock::now()-diagnostics_at>=std::chrono::seconds(30)){
       diagnostics_at=Clock::now();emit("diagnostics");
@@ -305,6 +324,11 @@ static sockaddr_in endpoint(const Config& c) {
   sockaddr_in a{};a.sin_family=AF_INET;a.sin_port=htons(c.port);inet_pton(AF_INET,c.address.c_str(),&a.sin_addr);return a;
 }
 static int packet_fd(const Config& c, int test_fd) {
+#ifdef CVPN_ANDROID
+  (void)c;check(test_fd<0&&android_runtime&&android_runtime->tun_fd>=0,"android_tun");
+  Fd owned(dup(android_runtime->tun_fd));check(owned.n>=0,"android_tun_dup");
+  nonblock(owned.n);int result=owned.n;owned.n=-1;return result;
+#else
 #ifdef CVPN_TEST_PACKET_FD
   if(test_fd>=0){
     int type=0; socklen_t len=sizeof(type); sockaddr_storage a{};socklen_t alen=sizeof(a);
@@ -320,6 +344,7 @@ static int packet_fd(const Config& c, int test_fd) {
   ifreq req{};req.ifr_flags=IFF_TUN|IFF_NO_PI;std::memcpy(req.ifr_name,c.tun.c_str(),c.tun.size());
   check(ioctl(fd.n,TUNSETIFF,&req)==0&&c.tun==req.ifr_name,"tun_attach");
   int result=fd.n;fd.n=-1;return result;
+#endif
 }
 static bool is_http1(SSL* ssl) {
   const uint8_t* p=nullptr;unsigned n=0;SSL_get0_alpn_selected(ssl,&p,&n);
@@ -395,7 +420,7 @@ struct Session {
   static const char* callback_error(const char* message){
     // Only our own fixed vocabulary can cross the metadata boundary. Never
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
-    for(const char* code:{"connect","connect_socket","connect_deadline","timeout","cancelled","socket_error","poll","tls_socket","tls_sni","tls_identity","tcp_nodelay","profile_hello_write",
+    for(const char* code:{"connect","connect_socket","connect_deadline","timeout","cancelled","socket_error","poll","tls_socket","tls_sni","tls_identity","tcp_nodelay","profile_hello_write","android_socket_protect",
         "unexpected_headers","headers_limit","duplicate_header","request_invalid",
         "auth_rejected","auth_clock_skew","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
         "address_mode","address_offer_missing","address_offer_ipv4","address_offer_format","address_offer_auth","address_offer_purpose","address_offer_hmac","address_offer_mismatch","discovery_incomplete","discovery_payload",
@@ -956,8 +981,13 @@ static int transparent_engine(const json& j, bool validate, bool initialize, boo
   }
   check(notify.state("stopped"),"relay_notify");return broken?1:0;
 }
+#ifdef CVPN_ANDROID
+int cvpn_android_main(int argc,char** argv){
+  AndroidSigpipeGuard signal_guard;
+#else
 int main(int argc,char** argv){
   signal(SIGPIPE,SIG_IGN);signal(SIGTERM,on_signal);signal(SIGINT,on_signal);signal(SIGHUP,on_reload);
+#endif
   try{
     if(argc==2&&std::string(argv[1])=="--capabilities"){
       std::cout<<json({{"version",1},{"engine","clean-vpn-native-m1"},{"transport","boring-tls"},
@@ -980,6 +1010,10 @@ int main(int argc,char** argv){
     check(validate||initialize||discover||((count==3||count==5)&&std::string(argv[1])=="--config"),"usage_config");int test=-1;
     if(count==5){check(std::string(argv[3])=="--test-packet-fd","usage_fixture");test=std::stoi(argv[4]);check(test>2,"fixture_fd");}
     const auto raw_config=file(argv[2],16384);const auto config=json::parse(raw_config);
+#ifdef CVPN_ANDROID
+    check(config.is_object()&&config.value("role",std::string{})=="client"&&!config.contains("transport")&&
+      !config.value("dns",false),"android_boring_client_only");
+#endif
     PeerReload reload(argv[2],raw_config);
     if(config.is_object()&&config.value("transport",std::string{})=="transparent-tls"){
       check(!discover,"address_discovery_packet_client_only");
@@ -995,6 +1029,9 @@ int main(int argc,char** argv){
     }
     check(!initialize||bool(combined),"relay_config_required");
     Config c(combined?combined->boring:config);std::string secret;
+#ifdef CVPN_ANDROID
+    check(android_runtime&&c.client&&!combined&&!c.dns&&!discover&&!service&&!clock_recovery,"android_client_only");
+#endif
     check(!discover||c.client,"address_discovery_client_only");c.discovery=discover;
     check(!clock_recovery||c.client,"clock_recovery_packet_client_only");
     if(c.client){secret=file(c.secret_path,32,true);check(secret.size()==32,"secret_length");}
@@ -1043,10 +1080,21 @@ int main(int argc,char** argv){
       auto result=json({{"valid",true},{"role",c.client?"client":"exit"},{"peers",c.client?1:c.peers.size()}});
       if(c.tls_profile)result["tls_profile"]=c.tls_profile->report();
       if(combined){result["transport"]="combo-tls";result["relay_limits"]={{"sessions",combined->relay.limits.sessions},{"per_client",combined->relay.limits.per_client}};result["relay_identities"]=!combined->relay.secret_path.empty()?1:combined->relay.peers.size();}
-      std::cout<<result.dump()<<"\n";return 0;
+#ifdef CVPN_ANDROID
+      android_runtime->event(result.dump());
+#else
+      std::cout<<result.dump()<<"\n";
+#endif
+      return 0;
     }
+#ifndef CVPN_ANDROID
     if(!discover&&!service)nonblock(STDIN_FILENO);
-    nonblock(STDOUT_FILENO);Control ctl;ServiceNotify notify(service);
+    nonblock(STDOUT_FILENO);
+#endif
+    Control ctl;ServiceNotify notify(service);
+#ifdef CVPN_ANDROID
+    ctl.input_fd=-1;
+#endif
     if(service){ctl.input_fd=-1;ctl.notify=&notify;}
     if(discover){ctl.input_fd=-1;ctl.quiet=true;}
     if(!discover&&c.address_assignment)check((combined?combined->boring:config).contains("peer_ipv4"),"assigned_ipv4_required");
@@ -1114,6 +1162,9 @@ int main(int argc,char** argv){
       try{
         auto deadline=Clock::now()+std::chrono::seconds(10);auto generation=ctl.generation;
         socket_fd.n=socket(AF_INET,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);check(socket_fd.n>=0,"connect_socket");auto addr=endpoint(c);
+#ifdef CVPN_ANDROID
+        check(android_runtime->protect(socket_fd.n),"android_socket_protect");
+#endif
         ctl.set("connecting");int rc=connect(socket_fd.n,reinterpret_cast<sockaddr*>(&addr),sizeof(addr));
         if(rc<0){check(errno==EINPROGRESS,"connect");wait_fd(socket_fd.n,POLLOUT,ctl,Clock::now()+std::chrono::seconds(3),generation);int err=0;socklen_t size=sizeof(err);check(getsockopt(socket_fd.n,SOL_SOCKET,SO_ERROR,&err,&size)==0&&err==0,"connect");}
         int no_delay=1;
@@ -1178,9 +1229,22 @@ int main(int argc,char** argv){
       // queues are always destroyed; a continuous producer cannot stall stop.
       std::array<uint8_t,65536> discard{};
       for(int i=0;i<256&&read(tun.n,discard.data(),discard.size())>0;i++)ctl.dropped++;
-      auto retry=Clock::now()+std::chrono::milliseconds(250);
+      auto retry=Clock::now()+std::chrono::milliseconds(
+#ifdef CVPN_ANDROID
+        1000
+#else
+        250
+#endif
+      );
       while(!ctl.stop&&!interrupted&&Clock::now()<retry){ctl.read_commands();pollfd p{ctl.input_fd,POLLIN,0};poll(&p,1,25);}
     }
     OPENSSL_cleanse(secret.data(),secret.size());ctl.set(ctl.dns_failed?"dns_failed":"stopped");return discover||ctl.dns_failed||(service&&!interrupted)?1:0;
-  }catch(...){std::cerr<<"clean-vpn-engine: configuration or startup refused\n";return 1;}
+  }catch(...){
+#ifdef CVPN_ANDROID
+    if(android_runtime)android_runtime->event("{\"event\":\"state\",\"state\":\"configuration_or_startup_refused\"}");
+#else
+    std::cerr<<"clean-vpn-engine: configuration or startup refused\n";
+#endif
+    return 1;
+  }
 }

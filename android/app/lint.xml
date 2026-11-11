@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Local APK for API 23 TV, not a Google Play submission. Other checks stay enabled. -->
+    <issue id="ExpiredTargetSdkVersion" severity="ignore" />
+</lint>

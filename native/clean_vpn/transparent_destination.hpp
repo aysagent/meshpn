@@ -37,6 +37,11 @@ class DestinationPolicy {
   std::vector<IPv4Prefix> denied_;
   explicit DestinationPolicy(bool internet) : public_https_(internet) {}
   static void exclude_local(uint32_t target) {
+#ifdef CVPN_ANDROID
+    // Android APK is packet-client-only; getifaddrs is unavailable on API 23.
+    // Never replace the transparent destination guard with a permissive stub.
+    (void)target;require(false,"relay_android_unsupported");
+#else
     ifaddrs* raw = nullptr;
     require(getifaddrs(&raw) == 0, "relay_policy_interfaces");
     std::unique_ptr<ifaddrs, decltype(&freeifaddrs)> addresses(raw, freeifaddrs);
@@ -55,6 +60,7 @@ class DestinationPolicy {
       if ((a->ifa_flags & IFF_POINTOPOINT) && a->ifa_dstaddr && a->ifa_dstaddr->sa_family == AF_INET)
         require(target != ntohl(reinterpret_cast<sockaddr_in*>(a->ifa_dstaddr)->sin_addr.s_addr), "relay_destination_local");
     }
+#endif
   }
 public:
   explicit DestinationPolicy(std::vector<Destination> allowed) : allowed_(std::move(allowed)) {

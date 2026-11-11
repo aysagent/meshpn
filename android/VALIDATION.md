@@ -1,0 +1,34 @@
+# Проверка Android TV client — 2026-11-11
+
+Собран release APK `org.meshpn.client`, версия 0.1.0, `armeabi-v7a`, minSdk 23,
+targetSdk 28. APK подписан локальным RSA-ключом; проверены подписи v1 (Android 6)
+и v2. В manifest есть TV launcher, touchscreen не обязателен, backup выключен,
+приложение не debuggable. Ключ подписи не входит в Git.
+
+Выполнено:
+
+- `android/build-apk.sh`: release-сборка, **11 unit-тестов импорта**, Android lint
+  без ошибок. Оставшиеся warnings: русские строки в первой версии UI, размер
+  TV vector banner и отсутствие x86/ChromeOS ABI. Play-only проверка target SDK
+  отдельно отключена: этот APK предназначен для локальной установки.
+- Embedded Android adapter в отдельном Alpine ARM64 контейнере без внешней сети:
+  **2 матрицы HTTP/2 и HTTP/1.1**. Настоящий TLS, передача IPv4-пакетов в обе
+  стороны (включая UDP/53), reconnect после смены generation, protect перед
+  connect и каждым повтором, отказ protect, bounded stop/restart, сохранение
+  владения переданным FD, отсутствие изменения stdio и process SIGPIPE handler.
+  В каждой матрице отдельно отклонены неверные TLS-имя и PSK.
+- Linux native regression: **2 матрицы H2/H1** с backpressure, reconnect,
+  blackhole, service lifecycle, неверными именем/CA/ключом.
+- Общий native CTest: **14/14**, без пропусков.
+
+При переносе обнаружены и устранены API-23 отсутствие getifaddrs в неиспользуемой
+transparent-ветке и недостаточный стандартный стек musl worker. Android worker
+запрашивает 2 МиБ; Linux harness проверен с тем же размером.
+
+**Не проверено на физическом Android:** загрузка JNI на прошивке проектора,
+системный VPN consent, настоящий Android TUN/netd/DNS, IPv6 policy OEM, пульт,
+автозапуск и скорость/память A33 при просмотре видео. Socketpair-тест UDP/53
+проверяет передачу пакетов, не Android DNS resolution. Для этого нужны установка
+APK и приёмка из README на самом проекторе. Эмулятор Android не запускался.
+
+VPS/Radxa и сетевые настройки Mac этой работой не изменялись.
