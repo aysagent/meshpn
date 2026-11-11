@@ -77,4 +77,13 @@ public class EnrollmentTest {
     @Test public void rejectsOversizedImport() throws Exception {
         JSONObject b=bundle();char[] huge=new char[Enrollment.LIMIT];java.util.Arrays.fill(huge,'a');b.put("padding",new String(huge));rejected(b);
     }
+    @Test public void rejectsDeepJsonBeforeRecursiveParser() throws Exception {
+        String nested="0";for(int i=0;i<1000;i++)nested="["+nested+"]";
+        try{new Enrollment("{\"padding\":"+nested+"}");fail("accepted deeply nested input");}catch(Exception expected){assertTrue(expected.getMessage().contains("вложенность"));}
+        JSONObject b=bundle();b.getJSONObject("config").put("tls_profile_path","@bundle/profile.json");
+        b.getJSONObject("files").put("profile.json",Base64.getEncoder().encodeToString(("{\"padding\":"+nested+"}").getBytes("UTF-8")));rejected(b);
+    }
+    @Test public void nestingCheckRespectsQuotedBracketsAndEscapes() throws Exception {
+        JSONObject b=bundle();b.put("name","quoted \\\" {[ ]} \\ text");assertNotNull(new Enrollment(b.toString()));
+    }
 }

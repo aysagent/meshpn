@@ -1,13 +1,13 @@
 # Проверка Android TV client — 2026-11-11
 
-Собран release APK `org.meshpn.client`, версия 0.1.0, `armeabi-v7a`, minSdk 23,
+Собран release APK `org.meshpn.client`, версия 0.1.1, `armeabi-v7a`, minSdk 23,
 targetSdk 28. APK подписан локальным RSA-ключом; проверены подписи v1 (Android 6)
 и v2. В manifest есть TV launcher, touchscreen не обязателен, backup выключен,
 приложение не debuggable. Ключ подписи не входит в Git.
 
 Выполнено:
 
-- `android/build-apk.sh`: release-сборка, **11 unit-тестов импорта**, Android lint
+- `android/build-apk.sh`: release-сборка, **24 JVM unit-теста**, Android lint
   без ошибок. Оставшиеся warnings: русские строки в первой версии UI, размер
   TV vector banner и отсутствие x86/ChromeOS ABI. Play-only проверка target SDK
   отдельно отключена: этот APK предназначен для локальной установки.
@@ -24,6 +24,16 @@ targetSdk 28. APK подписан локальным RSA-ключом; пров
 При переносе обнаружены и устранены API-23 отсутствие getifaddrs в неиспользуемой
 transparent-ветке и недостаточный стандартный стек musl worker. Android worker
 запрашивает 2 МиБ; Linux harness проверен с тем же размером.
+
+Повторный аудит 0.1.1: исправлены повторный вызов JNI после ошибки загрузки
+библиотеки, отмена во время её инициализации, блокировка UI на native-проверке
+импорта, публикация импорта после начала VPN и обработка устаревших callback.
+Добавлены откат неудачного сохранения, ограничение глубины JSON и общий
+15-секундный срок результата HTTPS-проверки, включая DNS. При зависшем resolver
+новые проверки не создают дополнительные потоки. Тесты используют подменённые
+Context/SharedPreferences/native backend, не эмулируют Android framework.
+Нативные матрицы и CTest выше выполнены при подготовке 0.1.0; C++ код в 0.1.1
+не менялся. Подпись APK сохранена для установки обновления поверх 0.1.0.
 
 **Не проверено на физическом Android:** загрузка JNI на прошивке проектора,
 системный VPN consent, настоящий Android TUN/netd/DNS, IPv6 policy OEM, пульт,

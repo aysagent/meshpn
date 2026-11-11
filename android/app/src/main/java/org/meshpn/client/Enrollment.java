@@ -18,6 +18,17 @@ final class Enrollment {
         if (!(v instanceof String)) throw new Exception("Поле " + key + " должно быть строкой");
         return (String) v;
     }
+    private static void boundedJson(String text) throws Exception {
+        int depth=0;boolean quoted=false,escaped=false;
+        for(int i=0;i<text.length();i++){
+            char c=text.charAt(i);
+            if(quoted){if(escaped)escaped=false;else if(c=='\\')escaped=true;else if(c=='"')quoted=false;}
+            else if(c=='"')quoted=true;
+            else if(c=='{'||c=='['){if(++depth>64)throw new Exception("Слишком глубокая вложенность JSON");}
+            else if(c=='}'||c==']'){if(--depth<0)throw new Exception("Некорректный JSON");}
+        }
+        if(depth!=0||quoted)throw new Exception("Некорректный JSON");
+    }
     static boolean ipv4(String s) {
         String[] parts = s.split("\\.", -1);
         if (parts.length != 4) return false;
@@ -60,6 +71,7 @@ final class Enrollment {
     }
     Enrollment(String text) throws Exception {
         if (text.getBytes(StandardCharsets.UTF_8).length > LIMIT) throw new Exception("Конфигурация больше 256 КиБ");
+        boundedJson(text);
         JSONObject root = new JSONObject(text);
         if (root.getInt("version") != 1) throw new Exception("Неизвестная версия bundle");
         if (root.optString("kind").equals("clean-vpn-install-bundle")) root = root.getJSONObject("enrollment");
@@ -94,7 +106,7 @@ final class Enrollment {
         psk = attachment(c, files, "secret_path", "psk", 32);
         if (psk.length != 32) throw new Exception("Ключ должен содержать 32 байта");
         profile = c.has("tls_profile_path") ? attachment(c, files, "tls_profile_path", "profile.json", 16384) : null;
-        if (profile != null) new JSONObject(new String(profile, StandardCharsets.UTF_8));
+        if (profile != null){String document=new String(profile, StandardCharsets.UTF_8);boundedJson(document);new JSONObject(document);}
         JSONArray servers = root.optJSONArray("android_dns");
         if (root.has("android_dns") && servers == null) throw new Exception("android_dns должен быть массивом");
         if (servers != null && (servers.length() < 1 || servers.length() > 3)) throw new Exception("Нужно 1–3 DNS-сервера");

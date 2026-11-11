@@ -9,8 +9,8 @@ android {
         minSdk 23
         // Local installation, including Android TV 6. No Play publication.
         targetSdk 28
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.1.1'
         ndk { abiFilters 'armeabi-v7a' }
         externalNativeBuild {
             cmake {
@@ -23,6 +23,7 @@ android {
     }
     externalNativeBuild { cmake { path '../../native/clean_vpn/CMakeLists.txt'; version '3.22.1' } }
     compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
+    buildFeatures { buildConfig true }
     signingConfigs {
         localRelease {
             def directory = new File(rootProject.projectDir, '.tools/signing')

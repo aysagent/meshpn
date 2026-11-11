@@ -7,22 +7,22 @@ import android.os.*;
 import org.json.JSONObject;
 import java.io.File;
 import java.util.ArrayDeque;
+import java.util.concurrent.atomic.AtomicReference;
 
 public final class VpnClientService extends VpnService {
     static final String START="org.meshpn.client.START", STOP="org.meshpn.client.STOP";
+    private static final AtomicReference<EngineSession> owner=new AtomicReference<>();
     private static volatile VpnClientService instance;
-    private static final java.util.concurrent.atomic.AtomicBoolean engineRunning=new java.util.concurrent.atomic.AtomicBoolean();
-    static volatile String activeDirectory="", state="stopped", lastError="";
-    static volatile long tx=0,rx=0;
+    static volatile String state="stopped", lastError="";
+    static volatile long tx=0,rx=0,connectionEpoch=0;
     private static final ArrayDeque<String> history=new ArrayDeque<>();
     private final Handler main=new Handler(Looper.getMainLooper());
-    private volatile long handle;
-    private volatile boolean stopping;
-    private Thread worker;
+    private volatile EngineSession session;
+    private boolean destroyed;
     private ConnectivityManager connectivity;
     private ConnectivityManager.NetworkCallback networks;
 
-    static boolean busy(){return engineRunning.get();}
+    static boolean busy(){return owner.get()!=null;}
     static synchronized String logs(){return android.text.TextUtils.join("\n",history);}
     private static synchronized void log(String value){
         if(history.size()>=120)history.removeFirst();
@@ -33,8 +33,7 @@ public final class VpnClientService extends VpnService {
         if(Build.VERSION.SDK_INT>=26)context.startForegroundService(i);else context.startService(i);
     }
     static void disconnect(Context context){
-        VpnClientService s=instance;
-        if(s!=null)s.main.post(s::requestStop);
+        VpnClientService s=instance;if(s!=null)s.main.post(s::requestStop);
     }
     @Override public void onCreate(){super.onCreate();instance=this;}
     private Notification notification(){
@@ -49,8 +48,8 @@ public final class VpnClientService extends VpnService {
             .addAction(new Notification.Action.Builder(R.drawable.icon,"Отключить",stop).build()).build();
     }
     private void publish(String next){
-        if(!state.equals(next)){state=next;log(next);}
-        if(worker!=null)((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification());
+        if(!state.equals(next)){state=next;++connectionEpoch;log(next);}
+        if(session!=null&&!destroyed)((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification());
     }
     public static String label(String s){
         switch(s){
@@ -64,87 +63,112 @@ public final class VpnClientService extends VpnService {
             case "tls_verify_not_yet_valid":case "tls_verify_expired":case "auth_clock_skew":return "Проверьте дату и время устройства / сертификат";
             case "tls_verify_untrusted":case "tls_verify_name":case "tls_verify_failed":return "Ошибка проверки сертификата";
             case "permission_required":return "Нужно разрешение Android на VPN";
+            case "native_unavailable":return "Native-библиотека недоступна для этого устройства";
+            case "vpn_interface_failed":return "Не удалось создать VPN-интерфейс Android";
             case "configuration_or_startup_refused":return "Не удалось запустить: проверьте конфигурацию";
             default:return "Переподключение / ошибка: "+s;
         }
     }
     @Override public int onStartCommand(Intent intent,int flags,int id){
         if(intent!=null&&STOP.equals(intent.getAction())){requestStop();return START_NOT_STICKY;}
-        if(worker!=null)return START_NOT_STICKY;
-        if(prepare(this)!=null){publish("permission_required");stopSelf();return START_NOT_STICKY;}
-        if(!engineRunning.compareAndSet(false,true)){stopSelf();return START_NOT_STICKY;}
+        if(session!=null)return START_NOT_STICKY;
+        if(intent==null||!START.equals(intent.getAction())){stopSelf();return START_NOT_STICKY;}
+        final EngineSession next=new EngineSession(EngineSession.nativeBackend());
+        final boolean acquired;
+        synchronized(ConfigStore.class){acquired=owner.compareAndSet(null,next);}
+        if(!acquired){stopSelf();return START_NOT_STICKY;}
+        session=next;lastError="";tx=rx=0;state="starting";++connectionEpoch;
+        boolean workerStarted=false;
         try {
-            final Enrollment config;final File engine;
-            synchronized(ConfigStore.class){
-                config=ConfigStore.load(this);engine=ConfigStore.engine(this);activeDirectory=engine.getParent();
-            }
-            handle=NativeBridge.create();if(handle==0)throw new Exception("native_create");
-            stopping=false;lastError="";tx=rx=0;state="starting";
             startForeground(1,notification());
-            worker=new Thread(null,()->runTunnel(config,engine),"clean-vpn-native",2*1024*1024);
-            worker.start();
-            connectivity=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
-            networks=new ConnectivityManager.NetworkCallback(){
-                @Override public void onAvailable(Network n){NativeBridge.networkChanged(handle);}
-                @Override public void onLost(Network n){NativeBridge.networkChanged(handle);}
-            };
-            connectivity.registerNetworkCallback(new NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(),networks);
+            if(prepare(this)!=null){finish(next,"permission_required");return START_NOT_STICKY;}
+            // Neither native validation nor config I/O holds the main looper.
+            new Thread(null,()->runTunnel(next),"clean-vpn-native",2*1024*1024).start();
+            workerStarted=true;
+            watchNetworks(next);
             log("starting; transport=boring-tls; DNS through TUN; no kill switch");
         }catch(Exception|LinkageError e){
-            lastError="startup_failed";log(lastError);publish("configuration_or_startup_refused");
-            if(worker!=null)requestStop();else {NativeBridge.release(handle);handle=0;activeDirectory="";engineRunning.set(false);stopForeground(true);stopSelf();}
+            next.stop();
+            if(!workerStarted)finish(next,"configuration_or_startup_refused");
         }
         return START_NOT_STICKY;
     }
-    private void runTunnel(Enrollment c,File engine){
-        ParcelFileDescriptor tun=null;int result=1;
+    private void watchNetworks(EngineSession current){
         try{
-            if(!stopping){
-                Builder b=new Builder().setSession("Clean VPN · "+c.name).setMtu(1280).addAddress(c.peer,32).addRoute("0.0.0.0",0);
-                for(String dns:c.dns)b.addDnsServer(dns);
-                // No IPv6 address, route, DNS or allowFamily: Android blocks
-                // this family while the IPv4-only VPN is established. No bypass.
-                tun=b.establish();
-                if(tun==null)throw new Exception("vpn_permission_revoked");
-                if(!stopping)result=NativeBridge.run(handle,engine.getAbsolutePath(),tun.getFd(),this);
-            }
-        }catch(Exception|LinkageError e){lastError="vpn_interface_or_native_failed";log(lastError);}
-        finally {
+            connectivity=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
+            networks=new ConnectivityManager.NetworkCallback(){
+                @Override public void onAvailable(Network n){current.networkChanged();}
+                @Override public void onLost(Network n){current.networkChanged();}
+            };
+            connectivity.registerNetworkCallback(new NetworkRequest.Builder().addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(),networks);
+        }catch(Exception e){networks=null;log("network_monitor_unavailable; native retry remains enabled");}
+    }
+    private void unwatchNetworks(){
+        if(networks!=null)try{connectivity.unregisterNetworkCallback(networks);}catch(Exception ignored){}
+        networks=null;
+    }
+    private void runTunnel(EngineSession current){
+        ParcelFileDescriptor tun=null;String terminal="configuration_or_startup_refused";
+        try{
+            final Enrollment config;final File engine;
+            synchronized(ConfigStore.class){config=ConfigStore.load(this);engine=ConfigStore.engine(this);}
+            long handle=current.open();
+            if(handle==0||current.stopped()){terminal="stopped";return;}
+            // Check files/profile before capturing any application traffic.
+            if(!NativeBridge.validate(engine.getAbsolutePath()))return;
+            if(current.stopped()){terminal="stopped";return;}
+            terminal="vpn_interface_failed";
+            Builder b=new Builder().setSession("Clean VPN · "+config.name).setMtu(1280).addAddress(config.peer,32).addRoute("0.0.0.0",0);
+            for(String dns:config.dns)b.addDnsServer(dns);
+            // No IPv6 address/route/DNS/allowFamily: Android blocks this family.
+            tun=b.establish();if(tun==null){terminal="permission_required";return;}
+            if(current.stopped()){terminal="stopped";return;}
+            int result=NativeBridge.run(handle,engine.getAbsolutePath(),tun.getFd(),this);
+            terminal=result==0?"stopped":"configuration_or_startup_refused";
+        }catch(LinkageError e){terminal="native_unavailable";}
+        catch(Exception e){/* Fixed stage code only; no config contents in logs. */}
+        finally{
             if(tun!=null)try{tun.close();}catch(Exception ignored){}
-            NativeBridge.release(handle);
-            final int exit=result;
-            main.post(()->{
-                handle=0;worker=null;activeDirectory="";
-                engineRunning.set(false);
-                if(networks!=null)try{connectivity.unregisterNetworkCallback(networks);}catch(Exception ignored){}
-                networks=null;
-                publish(stopping||exit==0?"stopped":"configuration_or_startup_refused");
-                stopForeground(true);stopSelf();
-            });
+            current.close();
+            final String result=current.stopped()?"stopped":terminal;
+            main.post(()->finish(current,result));
         }
     }
+    private void finish(EngineSession current,String terminal){
+        // An obsolete worker/callback must never clear another session's lease.
+        if(session!=current)return;
+        current.close();unwatchNetworks();session=null;
+        if(owner.compareAndSet(current,null)){
+            if(!terminal.equals("stopped"))lastError=terminal;
+            publish(terminal);
+        }
+        if(!destroyed){stopForeground(true);stopSelf();}
+    }
     // Called on the native worker, before connect(), including every retry.
-    public boolean protectSocket(int socket){return !stopping&&protect(socket);}
+    public boolean protectSocket(int socket){EngineSession s=session;return s!=null&&!s.stopped()&&protect(socket);}
     public void onNativeEvent(String line){
+        final EngineSession current=session;
+        if(current==null||current.stopped())return;
         try{
             JSONObject j=new JSONObject(line);
-            tx=j.optLong("tx_packets",tx);rx=j.optLong("rx_packets",rx);
-            JSONObject diagnostics=j.optJSONObject("diagnostics");
-            if(diagnostics!=null){JSONObject p=diagnostics.optJSONObject("packet");if(p!=null){JSONObject end=p.optJSONObject("last_end");if(end!=null)lastError=end.optString("code");}}
-            if(j.optString("event").equals("state")){
-                String next=j.optString("state");
-                main.post(()->{if(!stopping)publish(next);});
-            }
+            main.post(()->{
+                if(session!=current||owner.get()!=current||current.stopped())return;
+                tx=j.optLong("tx_packets",tx);rx=j.optLong("rx_packets",rx);
+                JSONObject d=j.optJSONObject("diagnostics"),p=d==null?null:d.optJSONObject("packet"),end=p==null?null:p.optJSONObject("last_end");
+                if(end!=null)lastError=end.optString("code");
+                if(j.optString("event").equals("state"))publish(j.optString("state"));
+            });
         }catch(Exception ignored){}
     }
     private void requestStop(){
-        if(worker==null){publish("stopped");stopForeground(true);stopSelf();return;}
-        stopping=true;publish("stopping");NativeBridge.stop(handle);
+        EngineSession current=session;
+        if(current==null){stopForeground(true);stopSelf();return;}
+        publish("stopping");current.stop();
     }
     @Override public void onRevoke(){main.post(this::requestStop);}
     @Override public void onDestroy(){
-        stopping=true;if(handle!=0)NativeBridge.stop(handle);
+        destroyed=true;unwatchNetworks();EngineSession current=session;if(current!=null)current.stop();
         if(instance==this)instance=null;
         super.onDestroy();
     }

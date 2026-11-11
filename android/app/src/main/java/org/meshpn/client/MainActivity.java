@@ -9,8 +9,6 @@ import android.text.InputFilter;
 import android.view.*;
 import android.widget.*;
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /** Small native TV UI: every action is focusable and works with D-pad/OK/Back. */
@@ -21,6 +19,9 @@ public final class MainActivity extends Activity {
     private Button connect, fileImport, pasteImport, check, selectServer, deleteServer;
     private CheckBox profile, autostart;
     private boolean importing=false, configured=false, hasProfile=false, checking=false;
+    private final SharedPreferences.OnSharedPreferenceChangeListener settings=(prefs,key)->{
+        if("active".equals(key))runOnUiThread(()->{if(!isDestroyed())loadSummary();});
+    };
     private final Runnable refresh=new Runnable(){public void run(){render();handler.postDelayed(this,1000);}};
     private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private TextView text(LinearLayout parent,String value,int size){
@@ -56,17 +57,20 @@ public final class MainActivity extends Activity {
                 try{ConfigStore.deleteActive(this);loadSummary();}catch(Exception e){message.setText("Не удалось удалить конфигурацию");}
             }).show());
         profile=new CheckBox(this);profile.setText("Использовать браузерный TLS-профиль из конфигурации");profile.setTextSize(17);profile.setMinHeight(dp(56));page.addView(profile);
-        profile.setOnClickListener(v->{ConfigStore.prefs(this).edit().putBoolean("profile",profile.isChecked()).apply();});
+        profile.setOnClickListener(v->{
+            try{ConfigStore.setProfile(this,profile.isChecked());}
+            catch(IOException e){profile.setChecked(ConfigStore.prefs(this).getBoolean("profile",true));message.setText("Сначала отключите VPN");}
+        });
         autostart=new CheckBox(this);autostart.setText("Подключаться после загрузки устройства");autostart.setTextSize(17);autostart.setMinHeight(dp(56));page.addView(autostart);
         autostart.setOnClickListener(v->{
             ConfigStore.prefs(this).edit().putBoolean("autostart",autostart.isChecked()).apply();
             if(autostart.isChecked())message.setText("Сначала подключитесь вручную и подтвердите разрешение Android. Автозапуск зависит от прошивки.");
         });
-        check=button(page,"Проверить DNS и HTTPS",this::checkConnection);
+        check=button(page,"Проверить доступность HTTPS",this::checkConnection);
         button(page,"Показать диагностику",()->new AlertDialog.Builder(this).setTitle("Диагностика (без ключей)")
             .setMessage(report()).setPositiveButton("Закрыть",null).setNeutralButton("Сохранить",(d,w)->exportReport()).show());
         text(page,"DNS идёт через VPN при подключении. Kill switch отсутствует: после отключения или остановки приложения работает обычный интернет. IPv6 в этой версии блокируется на время VPN.",15);
-        setContentView(scroll);loadSummary();connect.requestFocus();
+        setContentView(scroll);loadSummary();(configured?connect:fileImport).requestFocus();
     }
     private void loadSummary(){
         try{
@@ -120,6 +124,7 @@ public final class MainActivity extends Activity {
     interface Source {String read() throws Exception;}
     private void importConfig(Source source){
         if(importing||VpnClientService.busy())return;
+        if(ConfigStore.saved(this).length>=8){message.setText("Сохранено 8 конфигураций. Удалите ненужную перед импортом.");return;}
         importing=true;message.setText("Проверка и сохранение конфигурации…");render();
         new Thread(()->{
             String result;
@@ -132,7 +137,7 @@ public final class MainActivity extends Activity {
         },"vpn-import").start();
     }
     private String report(){
-        return "Clean VPN Android TV 0.1.0\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")"
+        return "Clean VPN Android TV "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")"
             +"\nABI: "+android.text.TextUtils.join(", ",Build.SUPPORTED_ABIS)+"\nTransport: boring-tls\nState: "+VpnClientService.state
             +"\nLast session error: "+VpnClientService.lastError+"\nTX packets: "+VpnClientService.tx+"; RX packets: "+VpnClientService.rx
             +"\nKill switch: absent\n\n"+VpnClientService.logs();
@@ -147,23 +152,16 @@ public final class MainActivity extends Activity {
     }
     private void checkConnection(){
         if(checking)return;checking=true;render();message.setText("Проверка example.org через текущую сеть…");
-        new Thread(()->{
-            HttpURLConnection conn=null;String result;
-            long start=SystemClock.elapsedRealtime();
-            try{
-                conn=(HttpURLConnection)new URL("https://example.org/").openConnection();
-                conn.setRequestMethod("HEAD");conn.setConnectTimeout(5000);conn.setReadTimeout(5000);conn.setInstanceFollowRedirects(false);
-                int code=conn.getResponseCode();
-                result="DNS и HTTPS: получен HTTP "+code+", "+(SystemClock.elapsedRealtime()-start)+" мс. Это проверка доступности, не тест утечек.";
-            }catch(Exception e){result="DNS/HTTPS не прошли. Проверьте сеть, время устройства и состояние VPN. Старое системное хранилище CA тоже может влиять на эту проверку.";}
-            finally{if(conn!=null)conn.disconnect();}
-            final String done=result;
-            runOnUiThread(()->{if(isDestroyed())return;checking=false;message.setText(done);render();});
-        },"vpn-check").start();
+        final long epoch=VpnClientService.connectionEpoch;
+        boolean accepted=HttpsProbe.start(done->runOnUiThread(()->{
+            if(isDestroyed())return;checking=false;
+            message.setText(epoch==VpnClientService.connectionEpoch?done:"VPN изменился во время проверки. Повторите её для текущего соединения.");render();
+        }));
+        if(!accepted){checking=false;message.setText("Предыдущая сетевая проверка ещё освобождает ресурсы. Повторите позже.");render();}
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
-        if(result!=RESULT_OK)return;
+        if(result!=RESULT_OK){if(request==PERMISSION)message.setText("Разрешение на VPN не выдано. Подключение не запущено.");return;}
         if(request==PERMISSION){try{VpnClientService.start(this);}catch(Exception e){message.setText("Не удалось запустить службу VPN");}}
         if(request==IMPORT&&data!=null&&data.getData()!=null){final android.net.Uri uri=data.getData();importConfig(()->ConfigStore.read(getContentResolver().openInputStream(uri)));}
         if(request==EXPORT&&data!=null&&data.getData()!=null){
@@ -172,6 +170,6 @@ public final class MainActivity extends Activity {
             }catch(Exception e){message.setText("Не удалось сохранить диагностику");}
         }
     }
-    @Override protected void onResume(){super.onResume();handler.post(refresh);}
-    @Override protected void onPause(){handler.removeCallbacks(refresh);super.onPause();}
+    @Override protected void onResume(){super.onResume();ConfigStore.prefs(this).registerOnSharedPreferenceChangeListener(settings);loadSummary();handler.removeCallbacks(refresh);handler.post(refresh);}
+    @Override protected void onPause(){ConfigStore.prefs(this).unregisterOnSharedPreferenceChangeListener(settings);handler.removeCallbacks(refresh);super.onPause();}
 }
