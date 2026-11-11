@@ -1,13 +1,13 @@
 # Проверка Android TV client — 2026-11-11
 
-Собран release APK `org.meshpn.client`, версия 0.1.2, `armeabi-v7a`, minSdk 23,
+Собран release APK `org.meshpn.client`, версия 0.1.3, `armeabi-v7a`, minSdk 23,
 targetSdk 28. APK подписан локальным RSA-ключом; проверены подписи v1 (Android 6)
 и v2. В manifest есть TV launcher, touchscreen не обязателен, backup выключен,
 приложение не debuggable. Ключ подписи не входит в Git.
 
 Выполнено:
 
-- `android/build-apk.sh`: release-сборка, **28 JVM unit-тестов**, Android lint
+- `android/build-apk.sh`: release-сборка, **43 JVM unit-теста**, Android lint
   без ошибок. Оставшиеся warnings: русские строки в первой версии UI, размер
   TV vector banner и отсутствие x86/ChromeOS ABI. Play-only проверка target SDK
   отдельно отключена: этот APK предназначен для локальной установки.
@@ -50,5 +50,16 @@ Context/SharedPreferences/native backend, не эмулируют Android framew
 автозапуск и скорость/память A33 при просмотре видео. Socketpair-тест UDP/53
 проверяет передачу пакетов, не Android DNS resolution. Для этого нужны установка
 APK и приёмка из README на самом проекторе. Эмулятор Android не запускался.
+
+0.1.3 подготовлена после сообщения пользователя: системного окна разрешения
+на проекторе нет, `onActivityResult` возвращает результат без подтверждения.
+Причина пока не установлена. Добавлены метаданные прошивки/системного компонента,
+ограниченный persistent trace, recheck фактического разрешения и сохранение
+отчёта на app-specific external storage без root/ADB/системного picker.
+10 тестов проверяют consent lifecycle (в том числе OEM result/prepare mismatch,
+дублированный callback, recreation, ошибки этапов без exception messages);
+5 — запись отчёта на несколько накопителей, отказ одного, отсутствие носителей,
+повторную запись и конфликт целевого пути. Это JVM-тесты; настоящий Android
+VPN-диалог и запись на SD проектора остаются непроверенными.
 
 VPS/Radxa и сетевые настройки Mac этой работой не изменялись.

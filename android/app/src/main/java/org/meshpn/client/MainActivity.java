@@ -18,6 +18,7 @@ public final class MainActivity extends Activity {
     private TextView status, details, counters, message;
     private Button connect, fileImport, pasteImport, check, selectServer, deleteServer;
     private CheckBox profile, autostart;
+    private VpnConsent<Intent> consent;
     private boolean importing=false, configured=false, hasProfile=false, checking=false;
     private final SharedPreferences.OnSharedPreferenceChangeListener settings=(prefs,key)->{
         if("active".equals(key))runOnUiThread(()->{if(!isDestroyed())loadSummary();});
@@ -35,6 +36,18 @@ public final class MainActivity extends Activity {
     }
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);
+        consent=new VpnConsent<>(new VpnConsent.Host<Intent>(){
+            public Intent prepare(){
+                Intent intent=VpnService.prepare(MainActivity.this);
+                if(intent!=null)event(PermissionDiagnostics.describeIntent(MainActivity.this,intent));
+                return intent;
+            }
+            public void launch(Intent intent){startActivityForResult(intent,PERMISSION);}
+            public void start(){VpnClientService.start(MainActivity.this);message.setText("Разрешение получено. Запуск VPN…");}
+            public void event(String text){PermissionDiagnostics.record(MainActivity.this,text);}
+            public void message(String text){message.setText(text);}
+            public long elapsed(){return SystemClock.elapsedRealtime();}
+        },saved!=null&&saved.getBoolean("consent_pending",false),saved==null?0:saved.getLong("consent_started",0));
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);
         LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(48),dp(24),dp(48),dp(32));page.setBackgroundColor(Color.rgb(18,32,43));scroll.addView(page);
@@ -67,8 +80,8 @@ public final class MainActivity extends Activity {
             if(autostart.isChecked())message.setText("Сначала подключитесь вручную и подтвердите разрешение Android. Автозапуск зависит от прошивки.");
         });
         check=button(page,"Проверить доступность HTTPS",this::checkConnection);
-        button(page,"Показать диагностику",()->new AlertDialog.Builder(this).setTitle("Диагностика (без ключей)")
-            .setMessage(report()).setPositiveButton("Закрыть",null).setNeutralButton("Сохранить",(d,w)->exportReport()).show());
+        button(page,"Показать диагностику",this::showDiagnostics);
+        button(page,"Сохранить отчёт на SD / память",this::saveReportToStorage);
         text(page,"DNS идёт через VPN при подключении. Kill switch отсутствует: после отключения или остановки приложения работает обычный интернет. IPv6 в этой версии блокируется на время VPN.",15);
         setContentView(scroll);loadSummary();(configured?connect:fileImport).requestFocus();
     }
@@ -82,22 +95,19 @@ public final class MainActivity extends Activity {
         autostart.setChecked(ConfigStore.prefs(this).getBoolean("autostart",false));render();
     }
     private void render(){
-        boolean busy=VpnClientService.busy();
+        boolean busy=VpnClientService.busy(),permissionPending=consent.pending();
         status.setText(VpnClientService.label(VpnClientService.state));
         status.setTextColor(VpnClientService.state.equals("ready")?Color.rgb(65,214,195):Color.WHITE);
         counters.setText("Пакеты ↑ "+VpnClientService.tx+"   ↓ "+VpnClientService.rx);
-        connect.setText(busy?"Отключить":"Подключить");
-        connect.setEnabled(!importing&&(busy||configured)&&!VpnClientService.state.equals("stopping"));
-        fileImport.setEnabled(!busy&&!importing);pasteImport.setEnabled(!busy&&!importing);
-        selectServer.setEnabled(!busy&&!importing);deleteServer.setEnabled(configured&&!busy&&!importing);
-        profile.setEnabled(hasProfile&&!busy&&!importing);autostart.setEnabled(configured&&!importing);
+        connect.setText(permissionPending?"Ожидание разрешения Android…":busy?"Отключить":"Подключить");
+        connect.setEnabled(!permissionPending&&!importing&&(busy||configured)&&!VpnClientService.state.equals("stopping"));
+        fileImport.setEnabled(!permissionPending&&!busy&&!importing);pasteImport.setEnabled(!permissionPending&&!busy&&!importing);
+        selectServer.setEnabled(!permissionPending&&!busy&&!importing);deleteServer.setEnabled(configured&&!permissionPending&&!busy&&!importing);
+        profile.setEnabled(hasProfile&&!permissionPending&&!busy&&!importing);autostart.setEnabled(configured&&!importing);
         check.setEnabled(!checking);
     }
     private void requestConnection(){
-        try{
-            Intent permission=VpnService.prepare(this);
-            if(permission!=null)startActivityForResult(permission,PERMISSION);else VpnClientService.start(this);
-        }catch(Exception|LinkageError e){message.setText("Не удалось запустить VPN. Проверьте поддержку VPN в прошивке и ABI приложения.");}
+        message.setText("Запрос разрешения Android на VPN…");consent.request();render();
     }
     private void selectServer(){
         File[] dirs=ConfigStore.saved(this);
@@ -140,14 +150,39 @@ public final class MainActivity extends Activity {
         return "Clean VPN Android TV "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")"
             +"\nABI: "+android.text.TextUtils.join(", ",Build.SUPPORTED_ABIS)+"\nTransport: boring-tls\nState: "+VpnClientService.state
             +"\nLast session error: "+VpnClientService.lastError+"\nTX packets: "+VpnClientService.tx+"; RX packets: "+VpnClientService.rx
-            +"\nKill switch: absent\n\n"+VpnClientService.logs();
+            +"\nKill switch: absent\n\n"+PermissionDiagnostics.snapshot(this)+"\nSession events:\n"+VpnClientService.logs();
+    }
+    private void showDiagnostics(){
+        ScrollView scroll=new ScrollView(this);TextView text=new TextView(this);
+        text.setText(report());text.setTextSize(14);text.setTextIsSelectable(true);text.setPadding(dp(16),dp(8),dp(16),dp(8));scroll.addView(text);
+        new AlertDialog.Builder(this).setTitle("Диагностика (без ключей)").setView(scroll)
+            .setPositiveButton("Закрыть",null).setNeutralButton("На SD / память",(d,w)->saveReportToStorage())
+            .setNegativeButton("Выбрать файл",(d,w)->exportReport()).show();
+    }
+    private void saveReportToStorage(){
+        if(!DiagnosticFiles.saving.compareAndSet(false,true)){message.setText("Отчёт уже сохраняется…");return;}
+        final String document;
+        try{document=report();}catch(Exception e){DiagnosticFiles.saving.set(false);message.setText("Не удалось подготовить отчёт");return;}
+        final Context app=getApplicationContext();message.setText("Сохранение отчёта на доступные накопители…");
+        new Thread(()->{
+            String result;
+            try{
+                DiagnosticFiles.Result saved=DiagnosticFiles.save(app.getExternalFilesDirs("diagnostics"),document);
+                result=saved.paths.isEmpty()?"Нет доступного каталога для отчёта. В диагностике попробуйте «Выбрать файл». SD-карта может быть не смонтирована или недоступна прошивке.":
+                    "Отчёт сохранён:\n"+android.text.TextUtils.join("\n",saved.paths)+(saved.failed>0?"\nЧасть накопителей недоступна.":"");
+            }catch(Exception e){result="Не удалось записать отчёт. В диагностике попробуйте «Выбрать файл».";}
+            finally{DiagnosticFiles.saving.set(false);}
+            final String done=result;runOnUiThread(()->{
+                if(isDestroyed())return;message.setText(done);
+                new AlertDialog.Builder(this).setTitle("Сохранение диагностики").setMessage(done).setPositiveButton("OK",null).show();
+            });
+        },"vpn-report-save").start();
     }
     private void exportReport(){
         try{startActivityForResult(new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
             .setType("text/plain").putExtra(Intent.EXTRA_TITLE,"clean-vpn-diagnostic.txt"),EXPORT);}
         catch(ActivityNotFoundException e){
-            ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("VPN diagnostics",report()));
-            message.setText("Диагностика скопирована в буфер обмена");
+            saveReportToStorage();
         }
     }
     private void checkConnection(){
@@ -161,14 +196,17 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);
-        if(result!=RESULT_OK){if(request==PERMISSION)message.setText("Разрешение на VPN не выдано. Подключение не запущено.");return;}
-        if(request==PERMISSION){try{VpnClientService.start(this);}catch(Exception e){message.setText("Не удалось запустить службу VPN");}}
+        if(request==PERMISSION){consent.result(result);render();return;}
+        if(result!=RESULT_OK)return;
         if(request==IMPORT&&data!=null&&data.getData()!=null){final android.net.Uri uri=data.getData();importConfig(()->ConfigStore.read(getContentResolver().openInputStream(uri)));}
         if(request==EXPORT&&data!=null&&data.getData()!=null){
             try(OutputStream out=getContentResolver().openOutputStream(data.getData(),"wt")){
                 if(out==null)throw new IOException();out.write(report().getBytes(StandardCharsets.UTF_8));message.setText("Диагностика сохранена");
             }catch(Exception e){message.setText("Не удалось сохранить диагностику");}
         }
+    }
+    @Override protected void onSaveInstanceState(Bundle out){
+        out.putBoolean("consent_pending",consent.pending());out.putLong("consent_started",consent.started());super.onSaveInstanceState(out);
     }
     @Override protected void onResume(){super.onResume();ConfigStore.prefs(this).registerOnSharedPreferenceChangeListener(settings);loadSummary();handler.removeCallbacks(refresh);handler.post(refresh);}
     @Override protected void onPause(){ConfigStore.prefs(this).unregisterOnSharedPreferenceChangeListener(settings);handler.removeCallbacks(refresh);super.onPause();}
