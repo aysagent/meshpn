@@ -136,6 +136,8 @@ public final class VpnClientService extends VpnService {
             if(current.stopped()){terminal="stopped";return;}
             terminal="vpn_interface_failed";
             Builder b=new Builder().setSession("Clean VPN · "+config.name).setMtu(1280).addAddress(config.peer,32).addRoute("0.0.0.0",0);
+            Network uplink=NetworkDiagnostics.physicalNetwork(this);
+            b.setUnderlyingNetworks(uplink==null?new Network[0]:new Network[]{uplink});
             for(String dns:config.dns)b.addDnsServer(dns);
             // No IPv6 address/route/DNS/allowFamily: Android blocks this family.
             tun=b.establish();if(tun==null){terminal="permission_required";return;}
@@ -194,10 +196,24 @@ public final class VpnClientService extends VpnService {
         final long generation=networkGeneration.get();
         final ParcelFileDescriptor[] wrapper={null},owned={null};
         try{
+            final Network uplink=NetworkDiagnostics.physicalNetwork(this);
+            if(uplink==null){
+                setUnderlyingNetworks(new Network[0]);
+                lastNativeConnect="native_endpoint="+address+":"+port+" no_physical_uplink";log(lastNativeConnect);return -1;
+            }
+            // The system default can now be tun0. Select the actual carrier for
+            // EACH new socket, not just for the early post-establish diagnostic.
+            if(!setUnderlyingNetworks(new Network[]{uplink})){
+                lastNativeConnect="underlying_network_refused network="+uplink;log(lastNativeConnect);return -1;
+            }
+            final boolean[] bound={false};
             TcpProbe.Result result=TcpProbe.run(address,port,3000,socket->{
                 boolean ok=protect(socket);
                 if(ok)socketsProtected.incrementAndGet();else socketsRefused.incrementAndGet();
-                return ok;
+                if(!ok)return false;
+                uplink.bindSocket(socket);
+                bound[0]=true;
+                return true;
             },()->current.stopped()||networkGeneration.get()!=generation,socket->{
                 // Before API 29 fromSocket BORROWS the original descriptor.
                 // Always dup explicitly and keep wrapper alive through Java close.
@@ -205,7 +221,7 @@ public final class VpnClientService extends VpnService {
                 if(wrapper[0]==null)throw new java.io.IOException();
                 owned[0]=wrapper[0].dup();
             });
-            lastNativeConnect="native_endpoint="+address+":"+port+" android_tcp: "+result;
+            lastNativeConnect="native_endpoint="+address+":"+port+" network="+uplink+" explicit_bind="+bound[0]+" android_tcp: "+result;
             log(lastNativeConnect);
             if(current.stopped()||networkGeneration.get()!=generation||result.code.equals("cancelled"))return -2;
             if(result.code.equals("socket_prepare_refused"))return -4;

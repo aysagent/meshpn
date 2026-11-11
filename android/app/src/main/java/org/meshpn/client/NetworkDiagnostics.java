@@ -11,14 +11,14 @@ final class NetworkDiagnostics {
     static Network physicalNetwork(Context context){
         ConnectivityManager cm=(ConnectivityManager)context.getSystemService(Context.CONNECTIVITY_SERVICE);
         Network active=cm.getActiveNetwork();
-        if(active!=null&&physical(cm.getNetworkCapabilities(active)))return active;
-        Network fallback=null;Network[] all=cm.getAllNetworks();
-        for(int i=0;i<Math.min(all.length,8);i++){
-            NetworkCapabilities c=cm.getNetworkCapabilities(all[i]);if(!physical(c))continue;
-            if(c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))return all[i];
-            if(fallback==null)fallback=all[i];
+        java.util.List<UplinkSelection.Candidate<Network>> candidates=new java.util.ArrayList<>();
+        for(Network network:cm.getAllNetworks()){
+            NetworkCapabilities c=cm.getNetworkCapabilities(network);if(c==null)continue;
+            candidates.add(new UplinkSelection.Candidate<>(network,c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN),c.hasTransport(NetworkCapabilities.TRANSPORT_VPN),
+                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)));
         }
-        return fallback;
+        return UplinkSelection.choose(active,candidates);
     }
     static String snapshot(Context context){
         StringBuilder out=new StringBuilder();
@@ -37,6 +37,9 @@ final class NetworkDiagnostics {
                 LinkProperties link=cm.getLinkProperties(n);
                 if(link!=null){
                     out.append(" interface=").append(link.getInterfaceName());
+                    int count=0;for(LinkAddress address:link.getLinkAddresses()){
+                        if(count++>=8)break;out.append(" address=").append(address.getAddress().getHostAddress()).append('/').append(address.getPrefixLength());
+                    }
                     int defaults=0;for(RouteInfo route:link.getRoutes())if(route.isDefaultRoute())defaults++;
                     out.append(" default_routes=").append(defaults);
                 }

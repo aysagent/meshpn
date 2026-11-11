@@ -13,7 +13,7 @@ public class TcpProbeTest {
             TcpProbe.Result r=TcpProbe.run("127.0.0.1",listener.getLocalPort(),1000,s->{
                 assertFalse(s.isConnected());return true;
             },()->false);
-            assertTrue(r.toString(),r.ok());assertTrue(r.localPort>0);
+            assertTrue(r.toString(),r.ok());assertTrue(r.localPort>0);assertEquals("127.0.0.1",r.localAddress);
             try(Socket accepted=listener.accept()){accepted.setSoTimeout(1000);assertEquals(-1,accepted.getInputStream().read());}
         }
     }

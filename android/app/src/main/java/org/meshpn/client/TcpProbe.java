@@ -12,9 +12,10 @@ final class TcpProbe {
         final String code,stage;
         final long millis;
         final int localPort;
-        Result(String code,String stage,long millis,int port){this.code=code;this.stage=stage;this.millis=millis;localPort=port;}
+        final String localAddress;
+        Result(String code,String stage,long millis,int port,String address){this.code=code;this.stage=stage;this.millis=millis;localPort=port;localAddress=address;}
         boolean ok(){return code.equals("tcp_connected");}
-        public String toString(){return code+" stage="+stage+" elapsed_ms="+millis+" local_port="+localPort;}
+        public String toString(){return code+" stage="+stage+" elapsed_ms="+millis+" local_address="+localAddress+" local_port="+localPort;}
     }
     static InetAddress numericAddress(String value) throws Exception {
         String[] parts=value.split("\\.",-1);
@@ -47,20 +48,24 @@ final class TcpProbe {
                 boolean connected=channel.connect(endpoint);
                 channel.register(selector,SelectionKey.OP_CONNECT);
                 while(!connected){
-                    if(stopped.get())return result("cancelled",stage,start,local);
+                    if(stopped.get())return result("cancelled",stage,start,channel.socket());
                     long left=timeoutMs-(System.nanoTime()-start)/1000000;
-                    if(left<=0)return result("tcp_timeout",stage,start,channel.socket().getLocalPort());
+                    if(left<=0)return result("tcp_timeout",stage,start,channel.socket());
                     selector.select(Math.min(left,100));selector.selectedKeys().clear();
                     connected=channel.finishConnect();
                 }
                 local=channel.socket().getLocalPort();
                 if(stopped.get())return result("cancelled",stage,start,local);
                 stage="handoff";recipient.socket(channel.socket());
-                return result("tcp_connected",stage,start,local);
+                return result("tcp_connected",stage,start,channel.socket());
             }
         }catch(Exception e){return result(e.getClass().getSimpleName(),stage,start,local);}
     }
     private static Result result(String code,String stage,long start,int local){
-        return new Result(code,stage,(System.nanoTime()-start)/1000000,local);
+        return new Result(code,stage,(System.nanoTime()-start)/1000000,local,"unknown");
+    }
+    private static Result result(String code,String stage,long start,Socket socket){
+        InetAddress address=socket.getLocalAddress();
+        return new Result(code,stage,(System.nanoTime()-start)/1000000,socket.getLocalPort(),address==null?"unknown":address.getHostAddress());
     }
 }
