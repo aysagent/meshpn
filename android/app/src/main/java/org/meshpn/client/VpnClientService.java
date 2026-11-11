@@ -8,6 +8,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class VpnClientService extends VpnService {
     static final String START="org.meshpn.client.START", STOP="org.meshpn.client.STOP";
@@ -15,6 +16,8 @@ public final class VpnClientService extends VpnService {
     private static volatile VpnClientService instance;
     static volatile String state="stopped", lastError="";
     static volatile long tx=0,rx=0,connectionEpoch=0;
+    static volatile String connectionChecks="No connection checks yet";
+    static final AtomicInteger socketsProtected=new AtomicInteger(),socketsRefused=new AtomicInteger();
     private static final ArrayDeque<String> history=new ArrayDeque<>();
     private final Handler main=new Handler(Looper.getMainLooper());
     private volatile EngineSession session;
@@ -56,6 +59,8 @@ public final class VpnClientService extends VpnService {
             case "ready":return "Подключён";
             case "starting":case "idle":case "connecting":return "Подключается…";
             case "handshake":return "Проверка TLS и авторизации…";
+            case "checking_exit":return "Проверка TCP до создания VPN…";
+            case "checking_exit_tun":return "Проверка TCP при работающем VPN-интерфейсе…";
             case "stopping":return "Отключается…";
             case "stopped":return "Отключён";
             case "waiting_uplink":return "Нет сети";
@@ -78,6 +83,7 @@ public final class VpnClientService extends VpnService {
         synchronized(ConfigStore.class){acquired=owner.compareAndSet(null,next);}
         if(!acquired){stopSelf();return START_NOT_STICKY;}
         session=next;lastError="";tx=rx=0;state="starting";++connectionEpoch;
+        connectionChecks="Checks pending";socketsProtected.set(0);socketsRefused.set(0);
         boolean workerStarted=false;
         try {
             startForeground(1,notification());
@@ -118,11 +124,31 @@ public final class VpnClientService extends VpnService {
             // Check files/profile before capturing any application traffic.
             if(!NativeBridge.validate(engine.getAbsolutePath()))return;
             if(current.stopped()){terminal="stopped";return;}
+            connectionChecks="Endpoint: "+config.address+":"+config.port+"; certificate_name="+config.serverName
+                +"; sni="+config.sni+"; http="+config.httpVersion+"; peer="+config.peer
+                +"; browser_profile="+(config.profile!=null&&ConfigStore.prefs(this).getBoolean("profile",true))+"\n"
+                +"Before TUN:\n"+NetworkDiagnostics.snapshot(this);
+            checking(current,"checking_exit");
+            tcpCheck(current,config,"before_tun_protected",null);
+            if(current.stopped()){terminal="stopped";return;}
             terminal="vpn_interface_failed";
             Builder b=new Builder().setSession("Clean VPN · "+config.name).setMtu(1280).addAddress(config.peer,32).addRoute("0.0.0.0",0);
             for(String dns:config.dns)b.addDnsServer(dns);
             // No IPv6 address/route/DNS/allowFamily: Android blocks this family.
             tun=b.establish();if(tun==null){terminal="permission_required";return;}
+            if(current.stopped()){terminal="stopped";return;}
+            checking(current,"checking_exit_tun");
+            connectionChecks+="After TUN:\n"+NetworkDiagnostics.snapshot(this);
+            TcpProbe.Result after=tcpCheck(current,config,"after_tun_protected",null);
+            // Compare explicit physical-network routing only when protect-only failed.
+            // This is a diagnostic socket, never a change to the engine's routing policy.
+            if(!after.ok()&&!current.stopped()){
+                try{
+                    Network network=NetworkDiagnostics.physicalNetwork(this);
+                    if(network==null)connectionChecks+="explicit_network: no_physical_network\n";
+                    else tcpCheck(current,config,"after_tun_protected_bound network="+network,network);
+                }catch(Exception e){connectionChecks+="explicit_network: "+e.getClass().getSimpleName()+"\n";}
+            }
             if(current.stopped()){terminal="stopped";return;}
             int result=NativeBridge.run(handle,engine.getAbsolutePath(),tun.getFd(),this);
             terminal=result==0?"stopped":"configuration_or_startup_refused";
@@ -135,6 +161,18 @@ public final class VpnClientService extends VpnService {
             main.post(()->finish(current,result));
         }
     }
+    private void checking(EngineSession current,String state){
+        main.post(()->{if(session==current&&!current.stopped())publish(state);});
+    }
+    private TcpProbe.Result tcpCheck(EngineSession current,Enrollment config,String label,Network network){
+        TcpProbe.Result result=TcpProbe.run(config.address,config.port,3000,socket->{
+            if(current.stopped()||!protect(socket))return false;
+            if(network!=null)network.bindSocket(socket);
+            return true;
+        },current::stopped);
+        String entry=label+": "+result;
+        connectionChecks+=entry+"\n";log(entry);return result;
+    }
     private void finish(EngineSession current,String terminal){
         // An obsolete worker/callback must never clear another session's lease.
         if(session!=current)return;
@@ -146,7 +184,12 @@ public final class VpnClientService extends VpnService {
         if(!destroyed){stopForeground(true);stopSelf();}
     }
     // Called on the native worker, before connect(), including every retry.
-    public boolean protectSocket(int socket){EngineSession s=session;return s!=null&&!s.stopped()&&protect(socket);}
+    public boolean protectSocket(int socket){
+        EngineSession s=session;boolean ok=false;
+        try{ok=s!=null&&!s.stopped()&&protect(socket);}catch(Exception ignored){}
+        if(ok)socketsProtected.incrementAndGet();else socketsRefused.incrementAndGet();
+        return ok;
+    }
     public void onNativeEvent(String line){
         final EngineSession current=session;
         if(current==null||current.stopped())return;

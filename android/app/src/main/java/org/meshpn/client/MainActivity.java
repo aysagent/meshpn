@@ -150,7 +150,10 @@ public final class MainActivity extends Activity {
         return "Clean VPN Android TV "+BuildConfig.VERSION_NAME+"\nAndroid "+Build.VERSION.RELEASE+" (API "+Build.VERSION.SDK_INT+")"
             +"\nABI: "+android.text.TextUtils.join(", ",Build.SUPPORTED_ABIS)+"\nTransport: boring-tls\nState: "+VpnClientService.state
             +"\nLast session error: "+VpnClientService.lastError+"\nTX packets: "+VpnClientService.tx+"; RX packets: "+VpnClientService.rx
-            +"\nKill switch: absent\n\n"+PermissionDiagnostics.snapshot(this)+"\nSession events:\n"+VpnClientService.logs();
+            +"\nNative socket protect: accepted="+VpnClientService.socketsProtected.get()+"; refused="+VpnClientService.socketsRefused.get()
+            +"\nKill switch: absent\n\nConnection checks (TCP only, not TLS authentication):\n"+VpnClientService.connectionChecks
+            +"\nCurrent networks:\n"+NetworkDiagnostics.snapshot(this)
+            +"\n"+PermissionDiagnostics.snapshot(this)+"\nSession events:\n"+VpnClientService.logs();
     }
     private void showDiagnostics(){
         ScrollView scroll=new ScrollView(this);TextView text=new TextView(this);
