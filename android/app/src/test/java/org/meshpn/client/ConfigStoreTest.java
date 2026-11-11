@@ -47,6 +47,33 @@ public class ConfigStoreTest {
         try{ConfigStore.install(context,bundle(),p->true);fail();}catch(IOException expected){}
         assertEquals(old,ConfigStore.active(context));assertEquals(1,ConfigStore.saved(context).length);
     }
+    @Test public void failedSelectionPreservesServerAndProfile() throws Exception {
+        ConfigStore.install(context,bundle(),p->true);File first=ConfigStore.active(context);
+        ConfigStore.install(context,bundle(),p->true);File second=ConfigStore.active(context);
+        ConfigStore.setProfile(context,false);prefs.failNext=true;
+        try{ConfigStore.select(context,first);fail();}catch(IOException expected){}
+        assertEquals(second,ConfigStore.active(context));assertFalse(prefs.getBoolean("profile",true));
+        assertEquals(2,ConfigStore.saved(context).length);
+    }
+    @Test public void failedProfileChangeRestoresPreviousChoice() throws Exception {
+        ConfigStore.install(context,bundle(),p->true);prefs.failNext=true;
+        try{ConfigStore.setProfile(context,false);fail();}catch(IOException expected){}
+        assertTrue(prefs.getBoolean("profile",false));
+    }
+    @Test public void failedDeletionPreservesFilesAndAutostart() throws Exception {
+        ConfigStore.install(context,bundle(),p->true);File old=ConfigStore.active(context);
+        prefs.edit().putBoolean("autostart",true).commit();prefs.failNext=true;
+        try{ConfigStore.deleteActive(context);fail();}catch(IOException expected){}
+        assertEquals(old,ConfigStore.active(context));assertTrue(prefs.getBoolean("autostart",false));
+        assertTrue(new File(old,"psk").isFile());assertEquals(1,ConfigStore.saved(context).length);
+    }
+    @Test public void cannotSelectUnpublishedImport() throws Exception {
+        ConfigStore.install(context,bundle(),p->true);File old=ConfigStore.active(context);
+        File staged=new File(ConfigStore.base(context),UUID.randomUUID().toString());assertTrue(staged.mkdir());
+        assertTrue(new File(staged,"bundle.json").createNewFile());assertTrue(new File(staged,".pending").createNewFile());
+        try{ConfigStore.select(context,staged);fail();}catch(IOException expected){}
+        assertEquals(old,ConfigStore.active(context));assertEquals(1,ConfigStore.saved(context).length);
+    }
     @Test public void validationDoesNotHoldStoreLockAndStartedVpnPreventsPublication() throws Exception {
         ConfigStore.install(context,bundle(),p->true);File old=ConfigStore.active(context);
         CountDownLatch entered=new CountDownLatch(1),resume=new CountDownLatch(1);

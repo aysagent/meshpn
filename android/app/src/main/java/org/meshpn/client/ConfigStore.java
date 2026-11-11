@@ -47,17 +47,29 @@ final class ConfigStore {
     }
     static synchronized void select(Context c,File dir) throws Exception {
         if(VpnClientService.busy())throw new IOException("Сначала отключите VPN");
-        if(!dir.getParentFile().equals(base(c))||!new File(dir,"bundle.json").isFile())throw new IOException("Нет конфигурации");
-        if(!prefs(c).edit().putString("active",dir.getName()).putBoolean("profile",true).commit())throw new IOException("Не удалось сохранить выбор");
+        if(!dir.getParentFile().equals(base(c))||!new File(dir,"bundle.json").isFile()||new File(dir,".pending").exists())throw new IOException("Нет конфигурации");
+        String previous=prefs(c).getString("active","");boolean previousProfile=prefs(c).getBoolean("profile",true);
+        if(!prefs(c).edit().putString("active",dir.getName()).putBoolean("profile",true).commit()){
+            prefs(c).edit().putString("active",previous).putBoolean("profile",previousProfile).commit();
+            throw new IOException("Не удалось сохранить выбор");
+        }
     }
     static synchronized void setProfile(Context c,boolean enabled) throws IOException {
         if(VpnClientService.busy())throw new IOException("Сначала отключите VPN");
-        prefs(c).edit().putBoolean("profile",enabled).apply();
+        boolean previous=prefs(c).getBoolean("profile",true);
+        if(!prefs(c).edit().putBoolean("profile",enabled).commit()){
+            prefs(c).edit().putBoolean("profile",previous).commit();
+            throw new IOException("Не удалось сохранить настройку TLS-профиля");
+        }
     }
     static synchronized void deleteActive(Context c) throws Exception {
         if(VpnClientService.busy())throw new IOException("Сначала отключите VPN");
         File dir=active(c);
-        if(!prefs(c).edit().remove("active").putBoolean("autostart",false).commit())throw new IOException("Не удалось удалить конфигурацию");
+        boolean previousAutostart=prefs(c).getBoolean("autostart",false);
+        if(!prefs(c).edit().remove("active").putBoolean("autostart",false).commit()){
+            prefs(c).edit().putString("active",dir.getName()).putBoolean("autostart",previousAutostart).commit();
+            throw new IOException("Не удалось удалить конфигурацию");
+        }
         remove(dir);
     }
     interface Validator { boolean validate(String path); }

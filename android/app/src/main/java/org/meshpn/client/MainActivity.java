@@ -59,7 +59,7 @@ public final class MainActivity extends Activity {
         profile=new CheckBox(this);profile.setText("Использовать браузерный TLS-профиль из конфигурации");profile.setTextSize(17);profile.setMinHeight(dp(56));page.addView(profile);
         profile.setOnClickListener(v->{
             try{ConfigStore.setProfile(this,profile.isChecked());}
-            catch(IOException e){profile.setChecked(ConfigStore.prefs(this).getBoolean("profile",true));message.setText("Сначала отключите VPN");}
+            catch(IOException e){profile.setChecked(ConfigStore.prefs(this).getBoolean("profile",true));message.setText(e.getMessage());}
         });
         autostart=new CheckBox(this);autostart.setText("Подключаться после загрузки устройства");autostart.setTextSize(17);autostart.setMinHeight(dp(56));page.addView(autostart);
         autostart.setOnClickListener(v->{
@@ -108,7 +108,7 @@ public final class MainActivity extends Activity {
             labels[i]=e.name+" · "+e.address+":"+e.port;
         }catch(Exception e){labels[i]="Повреждённая конфигурация";}
         new AlertDialog.Builder(this).setTitle("Сохранённые серверы").setItems(labels,(d,which)->{
-            try{ConfigStore.select(this,dirs[which]);loadSummary();}catch(Exception e){message.setText("Сначала отключите VPN");}
+            try{ConfigStore.select(this,dirs[which]);loadSummary();}catch(Exception e){message.setText("Не удалось выбрать конфигурацию. Проверьте свободное место и отключите VPN.");}
         }).setNegativeButton("Отмена",null).show();
     }
     private void showPaste(){

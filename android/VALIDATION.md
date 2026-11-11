@@ -1,13 +1,13 @@
 # Проверка Android TV client — 2026-11-11
 
-Собран release APK `org.meshpn.client`, версия 0.1.1, `armeabi-v7a`, minSdk 23,
+Собран release APK `org.meshpn.client`, версия 0.1.2, `armeabi-v7a`, minSdk 23,
 targetSdk 28. APK подписан локальным RSA-ключом; проверены подписи v1 (Android 6)
 и v2. В manifest есть TV launcher, touchscreen не обязателен, backup выключен,
 приложение не debuggable. Ключ подписи не входит в Git.
 
 Выполнено:
 
-- `android/build-apk.sh`: release-сборка, **24 JVM unit-теста**, Android lint
+- `android/build-apk.sh`: release-сборка, **28 JVM unit-тестов**, Android lint
   без ошибок. Оставшиеся warnings: русские строки в первой версии UI, размер
   TV vector banner и отсутствие x86/ChromeOS ABI. Play-only проверка target SDK
   отдельно отключена: этот APK предназначен для локальной установки.
@@ -34,6 +34,16 @@ transparent-ветке и недостаточный стандартный ст
 Context/SharedPreferences/native backend, не эмулируют Android framework.
 Нативные матрицы и CTest выше выполнены при подготовке 0.1.0; C++ код в 0.1.1
 не менялся. Подпись APK сохранена для установки обновления поверх 0.1.0.
+
+Аудит 0.1.2: при неудачной записи SharedPreferences выбор/удаление сервера
+и переключение TLS-профиля восстанавливают прежнее состояние в памяти;
+файлы конфигурации при ошибке удаления сохраняются. Незавершённый импорт
+нельзя выбрать. Добавлены четыре регрессионных теста.
+У ARMv7 release-библиотеки проверены зависимости `libm.so`, `libdl.so`, `libc.so`:
+все 189 обязательных импортируемых символов есть в NDK stubs API 23. Это
+статическая проверка совместимости, а не запуск JNI на прошивке.
+Настройки TUN сверены с [контрактом Android VpnService.Builder](https://developer.android.com/reference/android/net/VpnService.Builder):
+дескриптор неблокирующий, IPv6 не разрешён. C++ в этой итерации не менялся.
 
 **Не проверено на физическом Android:** загрузка JNI на прошивке проектора,
 системный VPN consent, настоящий Android TUN/netd/DNS, IPv6 policy OEM, пульт,
