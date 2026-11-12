@@ -60,3 +60,36 @@ Native проверка отвергала несогласованный combo-
 
 Это проверка ограниченных запросов через USB, не браузерного замера Speedtest
 и не iPhone. Перезагрузка Zero в этой операции не выполнялась.
+
+## Исправление после перезагрузки пользователем
+
+После следующей загрузки Zero engine не стартовал: network owner был active,
+но `native-combo-daily-binary-recovery.service` завершалась с
+`update_bound_unit_or_controller_changed`. При миграции был обновлён digest
+guard в `installed.json`, но пропущена его отдельная статическая привязка
+в `binary-updates/service.json`. Уже активная oneshot recovery скрыла ошибку
+при первоначальном сохранении через UI; после boot она выполнилась заново.
+
+Исправление выполнено под `binary-updates/operation.lock` при остановленном
+engine и отсутствии `transaction.json`. Проверены все статические hashes:
+отличался ровно guard unit. Его исходный hash совпал с резервной копией,
+а новые байты — с единственной заменой `--server=154.62.226.216` на
+`--server=84.201.14.124`. Новый hash уже соответствовал installed manifest;
+активный engine совпал с `active.json`. Обновлён только этот pin, исходный
+`service.json` сохранён рядом с резервной копией миграции. Guard unit получил
+обычный режим 0644; ранее umask миграции оставил 0600 (это давало warning
+systemd, но причиной отказа был именно digest).
+
+Проверка целостности и Requires/After не отключались. Для последующих
+миграций обязательны проверка `--status` установленного update controller
+и новый запуск recovery unit, а не только restart engine с уже активной
+oneshot recovery. Не перепривязывать весь inventory к текущему содержимому:
+изменённые файлы должны быть отдельно сверены с разрешённой миграцией;
+при pending binary transaction перенос запрещён.
+
+После исправления `--status` прошёл, pending=false. Engine и recovery oneshot
+были остановлены отдельно, затем VPN включён именно web API админки:
+job `vpn-start` passed (2.8 с), recovery заново выполнилась успешно, engine ready,
+guard=true. Повторный USB smoke прошёл все 8 запросов, включая HTTP/HTTPS
+внешний IP нового VPS, DNS UDP/TCP и download/upload. Плата оставлена с VPN
+и защитой включёнными. Полной перезагрузки платы в этой проверке не было.
