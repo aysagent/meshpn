@@ -93,6 +93,9 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  if(c.publishMdns!==false&&!isExit)publish();
  let wifiBootTimer;async function restoreWifi(){try{if(!jobs.current&&wifi?.profiles.length){await wifi.restore();}}catch{}finally{if(!closing){wifiBootTimer=setTimeout(restoreWifi,15000);wifiBootTimer.unref();}}}void restoreWifi();
  async function applyVpn(p,phase=()=>{}){exact(p,['address','port','serverName','sni','profile','transport']);need(isIPv4(p.address)&&Number.isInteger(p.port)&&p.port>=1&&p.port<=65535,'vpn_endpoint');for(const n of [p.serverName,p.sni])need(typeof n==='string'&&/^[a-zA-Z0-9.-]{1,253}$/.test(n),'tls_name');const raw=vpn(),old=packetConfig(raw);need(raw.role==='client'&&packetControls,'packet_client_config_required');const packet={...old,address:p.address,port:p.port,server_name:p.serverName,sni:p.sni};if(p.profile)packet.tls_profile_path=selected(p.profile);else delete packet.tls_profile_path;
+ // Reject endpoint changes before constructing/checking a mixed combo config.
+ // Moving to another exit also needs its credentials, guard and route owner.
+ need(packet.address===old.address&&packet.port===old.port,'endpoint_change_requires_owner_migration',409);
  const desired=p.transport??raw.transport??'boring-tls';need(['boring-tls','combo-tls'].includes(desired),'client_transport');
  const changing=desired!==(raw.transport??'boring-tls');
  // Combo SNI selects the branch on exit. Changing it requires migrating the
@@ -101,9 +104,6 @@ export async function createBroker(c,{run=command,clientsFactory=createClientAdm
  need(!changing||transportTransaction,'transport_switch_not_supported',409);
  const plan=changing?clientTransportPlan(raw,readJson(transportNetwork),settings,desired,packet):null;
  const next=plan?.config??(raw.transport==='combo-tls'?{...raw,boring:packet}:packet);const file=c.state+'/candidate.json';atomic(file,next);await run(c.engine,['--check-config',file],{timeout:15000});
- // A settings operation must not silently leave the independent guard allowing
- // the old exit while switching the route/DNS owner to a new endpoint.
- need(packet.address===old.address&&packet.port===old.port,'endpoint_change_requires_owner_migration',409);
  let result;try{transportPhase=phase;result=plan?await transportTransaction.apply(next,{...plan.settings,profile:p.profile??null},plan.network):await transaction.apply(next,{...settings,profile:p.profile??null});}finally{transportPhase=()=>{};settings=readJson(settingsFile,{hostname:'mpn',profile:null});}
  return{...result,applied:!!c.nativeManaged&&result.restarted,requiresNativeMigration:!c.nativeManaged,requiresStart:!!c.nativeManaged&&!result.restarted};}
  async function dispatch(route,p={}){

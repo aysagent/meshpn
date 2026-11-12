@@ -73,6 +73,18 @@ test('broker switches both modes and never puts inactive credentials in public s
  }
  assert.doesNotMatch(JSON.stringify(await b.dispatch('/settings')),/inactiveCombo|relay\.psk|packet\.psk/);
 });
+test('endpoint changes are rejected before native validation, candidate writes or service changes',async t=>{
+ const {b,bundle,calls}=await broker(t);
+ for(const transport of ['combo-tls','boring-tls'])for(const change of [{address:'192.0.2.9'},{port:3443}]){
+  const before=fs.readFileSync(bundle+'/config.json');const count=calls.length;
+  const job=await b.dispatch('/vpn/settings',{transport,address:packet.address,port:443,serverName:packet.server_name,sni:packet.sni,profile:null,...change});
+  await new Promise(r=>setImmediate(r));
+  const result=(await b.dispatch('/operations')).jobs.find(j=>j.id===job.id);
+  assert.equal(result.status,'failed');assert.equal(result.error,'endpoint_change_requires_owner_migration');
+  assert.equal(calls.length,count);assert.deepEqual(fs.readFileSync(bundle+'/config.json'),before);
+  assert.equal(fs.existsSync(path.dirname(bundle)+'/candidate.json'),false);
+ }
+});
 test('switching preserves an installed browser profile outside the selectable catalog',async t=>{
  const {b,bundle}=await broker(t),file=bundle+'/installed-profile.json';
  fs.writeFileSync(file,fs.readFileSync('fixtures/native-tls-profiles/cold-h2.json'));

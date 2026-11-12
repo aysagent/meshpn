@@ -24,4 +24,5 @@ test('operation status reports actual network recovery and failed result',()=>{
  assert.match(operationText({kind:'vpn-settings',status:'running',phase:'waiting-tunnel'}),/Ожидание подключения/);
  assert.match(operationText({kind:'vpn-stop',status:'running'},{SubState:'stop-post'}),/Восстановление маршрутов/);
  assert.match(operationText({kind:'vpn-start',status:'failed',error:'native_not_ready'}),/ошибка.*native_not_ready/);
+ assert.match(operationText({kind:'vpn-settings',status:'failed',error:'endpoint_change_requires_owner_migration'}),/Смена exit требует переноса ключей/);
 });

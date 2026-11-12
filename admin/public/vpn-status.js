@@ -2,7 +2,7 @@ export const operationNames={'vpn-start':'Включение VPN','vpn-stop':'В
 const phases={sending:'Отправка команды',queued:'Команда принята',validating:'Проверка настроек','checking-guard':'Проверка защиты','starting-network':'Подготовка маршрутов и DNS','stopping-network':'Восстановление маршрутов и DNS','starting-engine':'Запуск движка','restarting-engine':'Перезапуск движка','waiting-tunnel':'Ожидание подключения туннеля','enabling-guard':'Включение защиты','disabling-guard':'Разрешение прямого выхода','restoring-usb-access':'Восстановление USB-доступа','applying-settings':'Проверка и применение настроек'};
 export function operationText(job,network={}){
  const name=operationNames[job?.kind]??job?.kind??'Операция';
- if(job?.status==='failed')return name+': ошибка · '+(job.error??'operation_failed');
+ if(job?.status==='failed')return name+': ошибка · '+(job.error==='endpoint_change_requires_owner_migration'?'Смена exit требует переноса ключей, сертификата, маршрутов и kill switch; эта форма не переносит подключение на другой сервер':job.error??'operation_failed');
  if(job?.status==='passed'){
   if(job.kind==='guard')return job.result?.active===false?'Прямой выход разрешён; VPN выключен':job.result?.unchanged?'Защита уже находится в выбранном состоянии':'Защита включена';
   return name+': завершено';
