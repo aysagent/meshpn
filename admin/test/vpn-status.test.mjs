@@ -6,6 +6,7 @@ test('running or activating service with a timeout never claims a connected tunn
   assert.match(vpnStatusText({ActiveState,StatusText:'connect_deadline'}),/Таймаут/);
   assert.doesNotMatch(vpnStatusText({ActiveState,StatusText:'connect_deadline'}),/подключён/);
   assert.equal(vpnStatusText({ActiveState,StatusText:'handshake'}),'TLS-подключение');
+  assert.equal(vpnStatusText({ActiveState,StatusText:'connect'}),'Не удалось соединиться с exit; повторная попытка');
  }
  assert.equal(vpnStatusText({ActiveState:'active',StatusText:'ready'}),'Туннель подключён');
  assert.equal(vpnStatusText({ActiveState:'active',StatusText:'idle_wait'}),'Включён, ожидает трафик');

@@ -13,7 +13,7 @@ export function operationText(job,network={}){
 export function vpnStatusText(v={},job,transport){
  if(job?.status==='running'&&['vpn-start','vpn-restart','vpn-stop','guard','vpn-settings'].includes(job.kind))return job.kind==='vpn-stop'?'Останавливается':job.kind==='vpn-restart'?'Перезапускается':'Переключение…';
  if(v.ActiveState==='deactivating')return 'Останавливается';
- const connection={ready:'Туннель подключён',idle_wait:'Включён, ожидает трафик',connecting:'Подключается',handshake:'TLS-подключение',waiting_uplink:'Ожидание Wi-Fi',connect_deadline:'Таймаут подключения; повторная попытка',h2_ping_timeout:'Связь потеряна; переподключение',h1_ping_timeout:'Связь потеряна; переподключение',tls_read:'Связь прервана; переподключение',auth_rejected:'Отказ авторизации',auth_clock_skew:'Не совпадает время клиента и exit'};
+ const connection={ready:'Туннель подключён',idle_wait:'Включён, ожидает трафик',connecting:'Подключается',connect:'Не удалось соединиться с exit; повторная попытка',handshake:'TLS-подключение',waiting_uplink:'Ожидание Wi-Fi',connect_deadline:'Таймаут подключения; повторная попытка',h2_ping_timeout:'Связь потеряна; переподключение',h1_ping_timeout:'Связь потеряна; переподключение',tls_read:'Связь прервана; переподключение',auth_rejected:'Отказ авторизации',auth_clock_skew:'Не совпадает время клиента и exit'};
  if(v.ActiveState==='activating')return connection[v.StatusText]??'Запускается';
  if(v.ActiveState==='inactive')return 'Выключен';
  if(v.ActiveState==='failed')return 'Ошибка службы';
