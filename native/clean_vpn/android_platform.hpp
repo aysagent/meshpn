@@ -19,6 +19,9 @@ struct AndroidRuntime {
   // (caller closes), or -1 failed, -2 cancelled, -3 timeout, -4 protect refused.
   // Must be bounded and observe stop/network_generation during connect.
   std::function<int(const std::string&,uint16_t)> connect;
+  // Explicit application UTC for certificate validity and client auth only.
+  // Connection deadlines remain monotonic; Linux and server clocks are untouched.
+  std::function<int64_t()> utc_seconds;
   std::function<void(const std::string&)> event;
 };
 extern thread_local AndroidRuntime* android_runtime;

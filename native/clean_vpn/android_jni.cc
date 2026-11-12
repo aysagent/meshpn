@@ -59,10 +59,16 @@ Java_org_meshpn_client_NativeBridge_run(JNIEnv* env,jclass,jlong id,jstring path
     Binding binding(runtime.get());
     jclass cls=env->GetObjectClass(service);
     const auto connect=env->GetMethodID(cls,"connectSocket","(Ljava/lang/String;I)I");
+    const auto utc=env->GetMethodID(cls,"vpnTimeSeconds","()J");
     const auto event=env->GetMethodID(cls,"onNativeEvent","(Ljava/lang/String;)V");
     env->DeleteLocalRef(cls);
-    if(!connect||!event)throw std::runtime_error("callbacks");
+    if(!connect||!event||!utc)throw std::runtime_error("callbacks");
     runtime->tun_fd=tun;
+    runtime->utc_seconds=[&](){
+      const auto value=env->CallLongMethod(service,utc);
+      if(env->ExceptionCheck()){env->ExceptionClear();throw std::runtime_error("android_clock_invalid");}
+      return int64_t(value);
+    };
     runtime->connect=[&](const std::string& address,uint16_t port){
       auto value=env->NewStringUTF(address.c_str());
       if(!value){env->ExceptionClear();return -1;}
@@ -78,5 +84,5 @@ Java_org_meshpn_client_NativeBridge_run(JNIEnv* env,jclass,jlong id,jstring path
     };
     result=invoke("--config",utf(env,path));
   }catch(...){if(env->ExceptionCheck())env->ExceptionClear();}
-  runtime->event={};runtime->connect={};runtime->running=false;return result;
+  runtime->event={};runtime->connect={};runtime->utc_seconds={};runtime->running=false;return result;
 }

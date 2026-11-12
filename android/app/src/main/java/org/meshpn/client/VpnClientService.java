@@ -69,7 +69,9 @@ public final class VpnClientService extends VpnService {
             case "stopped":return "Отключён";
             case "waiting_uplink":return "Нет сети";
             case "network_changed":return "Сеть изменилась, переподключение…";
-            case "tls_verify_not_yet_valid":case "tls_verify_expired":case "auth_clock_skew":return "Проверьте дату и время устройства / сертификат";
+            case "auth_clock_skew":return "Exit отклонил время авторизации — проверьте время VPN";
+            case "tls_verify_not_yet_valid":case "tls_verify_expired":return "Проверьте время VPN / срок сертификата";
+            case "android_clock_invalid":return "Недопустимое время VPN";
             case "tls_verify_untrusted":case "tls_verify_name":case "tls_verify_failed":return "Ошибка проверки сертификата";
             case "permission_required":return "Нужно разрешение Android на VPN";
             case "native_unavailable":return "Native-библиотека недоступна для этого устройства";
@@ -195,6 +197,7 @@ public final class VpnClientService extends VpnService {
     }
     // JNI calls on the engine worker for EVERY attempt. TLS and all payload
     // remain native; Android handles only protected, cancellable TCP setup.
+    public long vpnTimeSeconds(){return AppClock.VPN.nowMillis()/1000;}
     public int connectSocket(String address,int port){
         final EngineSession current=session;
         if(current==null||current.stopped())return -2;

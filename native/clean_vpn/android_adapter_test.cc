@@ -41,7 +41,8 @@ struct Client {
   AndroidRuntime runtime;std::thread worker;int packet=-1;std::atomic<int> protections{0};int result=-1;
   std::mutex mutex;std::condition_variable changed;std::map<std::string,int> states;
   std::vector<int> handed_fds;
-  explicit Client(const char* path,int connect_error=0,bool cancel_handoff=false){
+  explicit Client(const char* path,int connect_error=0,bool cancel_handoff=false,std::function<int64_t()> utc={}){
+    runtime.utc_seconds=std::move(utc);
     int pk[2];need(socketpair(AF_UNIX,SOCK_DGRAM,0,pk)==0,"client_pair");packet=pk[0];runtime.tun_fd=pk[1];
     runtime.connect=[this,connect_error,cancel_handoff](const std::string& address,uint16_t port){
       ++protections;if(connect_error)return connect_error;
@@ -112,7 +113,7 @@ int main(int argc,char** argv){
     Exit server(argv[1],argv[3]);
     struct sigaction before{},after{};sigaction(SIGPIPE,nullptr,&before);
     const int stdin_flags=fcntl(0,F_GETFL),stdout_flags=fcntl(1,F_GETFL);
-    if(argc==5){Client client(argv[2]);std::this_thread::sleep_for(std::chrono::seconds(2));
+    if(argc==5){Client client(argv[2],0,false,[]{return int64_t(time(nullptr));});std::this_thread::sleep_for(std::chrono::seconds(2));
       {std::lock_guard<std::mutex> lock(client.mutex);need(client.states["ready"]==0&&client.protections>0,"rejected_credentials");}
       pollfd p{server.packet,POLLIN,0};need(poll(&p,1,0)==0,"no_packet_injection");client.stop();
       std::cout<<"android negative authentication PASS\n";return 0;}
@@ -132,7 +133,7 @@ int main(int argc,char** argv){
       denied.stop();
     }
     for(const auto& error:std::map<int,std::string>{{-1,"connect"},{-2,"cancelled"},{-3,"connect_deadline"}}){
-      Client failed(argv[2],error.first);failed.await(error.second);
+      Client failed(argv[2],error.first);failed.await(error.second.c_str());
       {std::lock_guard<std::mutex> lock(failed.mutex);need(failed.states["handshake"]==0,"no_tls_after_connect_failure");}
       failed.stop();
     }
@@ -141,11 +142,26 @@ int main(int argc,char** argv){
       need(!cancelled.handed_fds.empty(),"cancelled_handoff_exercised");
       need(cancelled.states["handshake"]==0,"no_tls_after_cancelled_handoff");
     }
+    // A valid certificate does not excuse an incorrect PSK time window.
+    {Client skew(argv[2],0,false,[]{return int64_t(time(nullptr))+3600;});
+      skew.await("auth_clock_skew");skew.stop();need(skew.states["ready"]==0,"skew_not_authenticated");}
+    // A selected application time still enforces both certificate bounds.
+    for(const auto& sample:std::map<int64_t,std::string>{{-3600,"tls_verify_not_yet_valid"},{3*86400,"tls_verify_expired"}}){
+      Client invalid(argv[2],0,false,[offset=sample.first]{return int64_t(time(nullptr))+offset;});
+      invalid.await(sample.second.c_str());invalid.stop();need(invalid.states["ready"]==0,"time_does_not_bypass_certificate");
+    }
+    {Client invalid(argv[2],0,false,[]{return int64_t(-1);});invalid.await("android_clock_invalid");invalid.stop();}
+    // Model a one-hour-behind device plus the user's explicit +60 minute
+    // correction. The normal server uses its real clock and normal PSK checks.
+    {Client corrected(argv[2],0,false,[]{const auto device=int64_t(time(nullptr))-3600;return device+3600;});
+      corrected.await("ready");transfer(corrected.packet,server.packet,packet(false,101,true));
+      transfer(server.packet,corrected.packet,packet(true,101,true));
+      ++corrected.runtime.network_generation;corrected.await("ready",2);corrected.stop();}
     // Repeat after teardown: no process-global stop flag or stale descriptors.
     {Client client(argv[2]);client.await("ready");client.stop();}
     sigaction(SIGPIPE,nullptr,&after);need(before.sa_handler==after.sa_handler,"process_signal_unchanged");
     need(fcntl(0,F_GETFL)==stdin_flags&&fcntl(1,F_GETFL)==stdout_flags,"stdio_flags_unchanged");
-    std::cout<<"android adapter PASS: packets/DNS-port traffic, reconnect/protect, host TCP errors, cancelled handoff, socket ownership/nonblocking, stop/restart, borrowed TUN, SIGPIPE isolation\n";
+    std::cout<<"android adapter PASS: packets/DNS-port traffic, reconnect/protect, host TCP errors, cancelled handoff, socket ownership/nonblocking, stop/restart, borrowed TUN, SIGPIPE isolation, application UTC correction/auth skew/certificate time checks\n";
     return 0;
   }catch(const std::exception& e){std::cerr<<"android adapter FAIL: "<<e.what()<<"\n";return 1;}
 }

@@ -371,6 +371,15 @@ static std::string token(const std::string& secret,const std::array<uint8_t,32>&
   const char hex[]="0123456789abcdef";std::string result;
   for(int i=0;i<16;i++){result+=hex[out[i]>>4];result+=hex[out[i]&15];}OPENSSL_cleanse(out,sizeof(out));return result;
 }
+static int64_t client_unix_seconds() {
+#ifdef CVPN_ANDROID
+  if(cvpn::android_runtime&&cvpn::android_runtime->utc_seconds){
+    const auto now=cvpn::android_runtime->utc_seconds();
+    check(now>=0&&now<=INT32_MAX,"android_clock_invalid");return now;
+  }
+#endif
+  return int64_t(time(nullptr));
+}
 static bool authenticate(const std::string& provided,const std::string& secret,SSL* ssl) {
   if(provided.size()!=39||provided.substr(0,7)!="Bearer ")return false;
   auto exp=exporter(ssl); auto window=int64_t(time(nullptr))/900;bool ok=false;
@@ -422,7 +431,7 @@ struct Session {
     // surface library exceptions, peer headers, GOAWAY debug data or payloads.
     for(const char* code:{"connect","connect_socket","connect_deadline","timeout","cancelled","socket_error","poll","tls_socket","tls_sni","tls_identity","tcp_nodelay","profile_hello_write","android_socket_protect",
         "unexpected_headers","headers_limit","duplicate_header","request_invalid",
-        "auth_rejected","auth_clock_skew","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
+        "auth_rejected","auth_clock_skew","android_clock_invalid","peer_busy","early_end","vpn_response_rejected","data_before_auth","peer_address","peer_destination",
         "address_mode","address_offer_missing","address_offer_ipv4","address_offer_format","address_offer_auth","address_offer_purpose","address_offer_hmac","address_offer_mismatch","discovery_incomplete","discovery_payload",
         "invalid_ipv4","invalid_frame_length","queue_limit","queue_consume","http2_error","exporter","hmac",
         "auth_deadline","h2_ping_timeout","h2_goaway_no_error","h2_goaway_error","h2_reset_no_error","h2_reset_error",
@@ -606,7 +615,7 @@ struct Session {
     check(config.http_version=="auto"||(h1?config.http_version=="1.1":config.http_version=="2"),"http_version_mismatch");
     if(h1){
       check(!SSL_has_application_settings(ssl),"h2_alps_invalid");
-      if(config.client){const auto window=int64_t(time(nullptr))/900;
+      if(config.client){const auto window=client_unix_seconds()/900;
         std::vector<std::pair<std::string,std::string>> request={{"authorization","Bearer "+token(secret,exporter(ssl),window)},{"x-clean-vpn-window",std::to_string(window)}};
         if(config.tls_profile&&!config.tls_profile->user_agent.empty())request.emplace_back("user-agent",config.tls_profile->user_agent);
         if(config.discovery||config.address_assignment)request.emplace_back("x-clean-vpn-address-mode",config.discovery?"discover-v1":"session-v1");
@@ -674,7 +683,7 @@ struct Session {
       if(config.client){nghttp2_settings_entry no_push{NGHTTP2_SETTINGS_ENABLE_PUSH,0};h2check(nghttp2_submit_settings(h2,NGHTTP2_FLAG_NONE,&no_push,1));}
     }
     if(config.client){
-      const auto window=int64_t(time(nullptr))/900;
+      const auto window=client_unix_seconds()/900;
       const std::vector<std::string> native_order={":method",":path",":scheme",":authority"};
       const auto& order=config.tls_profile?config.tls_profile->pseudo_header_order:native_order;
       const std::map<std::string,std::string> values={{":method","POST"},{":path","/clean-vpn"},{":scheme","https"},{":authority",config.name}};
@@ -1180,6 +1189,11 @@ int main(int argc,char** argv){
           SSL_set_connect_state(ssl.get());
           check(SSL_set_tlsext_host_name(ssl.get(),c.sni.c_str())==1,"tls_sni");
           auto* verify=SSL_get0_param(ssl.get());
+#ifdef CVPN_ANDROID
+          // Check every certificate against the same application clock used by
+          // PSK authorization. No NO_CHECK_TIME, no verify callback bypass.
+          X509_VERIFY_PARAM_set_time(verify,time_t(client_unix_seconds()));
+#endif
           // Old clean-vpn provisioning could issue CN=clean-vpn without SAN.
           // Preserve that one legacy identity; DNS SAN still takes precedence.
           // All other names retain SAN-only verification. CA/time checks remain.

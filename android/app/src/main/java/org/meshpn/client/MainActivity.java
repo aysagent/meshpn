@@ -17,8 +17,9 @@ public final class MainActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final java.text.SimpleDateFormat deviceTime=new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss",java.util.Locale.ROOT);
     private TextView status, details, counters, message;
-    private Button connect, fileImport, pasteImport, check, selectServer, deleteServer;
+    private Button connect, fileImport, pasteImport, check, selectServer, deleteServer, clockSettings;
     private CheckBox profile, autostart;
+    private AlertDialog clockDialog;
     private VpnConsent<Intent> consent;
     private boolean importing=false, configured=false, hasProfile=false, checking=false;
     private final SharedPreferences.OnSharedPreferenceChangeListener settings=(prefs,key)->{
@@ -84,6 +85,7 @@ public final class MainActivity extends Activity {
         check=button(page,"Проверить доступность HTTPS",this::checkConnection);
         button(page,"Показать диагностику",this::showDiagnostics);
         button(page,"Сохранить отчёт на SD / память",this::saveReportToStorage);
+        clockSettings=button(page,"Настроить время VPN кнопками",this::showClockSettings);
         button(page,"Дата и время Android",()->{
             try{startActivity(new Intent(android.provider.Settings.ACTION_DATE_SETTINGS));}
             catch(ActivityNotFoundException|SecurityException e){
@@ -107,13 +109,49 @@ public final class MainActivity extends Activity {
         boolean busy=VpnClientService.busy(),permissionPending=consent.pending();
         status.setText(VpnClientService.label(VpnClientService.state));
         status.setTextColor(VpnClientService.state.equals("ready")?Color.rgb(65,214,195):Color.WHITE);
-        counters.setText("Пакеты ↑ "+VpnClientService.tx+"   ↓ "+VpnClientService.rx+"\nВремя устройства (UTC): "+deviceTime.format(new java.util.Date()));
+        counters.setText("Пакеты ↑ "+VpnClientService.tx+"   ↓ "+VpnClientService.rx+"\nВремя устройства (UTC): "+deviceTime.format(new java.util.Date())
+            +"\nВремя VPN (UTC): "+deviceTime.format(new java.util.Date(AppClock.VPN.nowMillis()))
+            +" · поправка "+AppClock.VPN.minutes()+" мин"
+            +("system_clock_changed".equals(AppClock.VPN.mode())?"\nСистемные часы изменились; ручная поправка сброшена":""));
         connect.setText(permissionPending?"Ожидание разрешения Android…":busy?"Отключить":"Подключить");
         connect.setEnabled(!permissionPending&&!importing&&(busy||configured)&&!VpnClientService.state.equals("stopping"));
         fileImport.setEnabled(!permissionPending&&!busy&&!importing);pasteImport.setEnabled(!permissionPending&&!busy&&!importing);
         selectServer.setEnabled(!permissionPending&&!busy&&!importing);deleteServer.setEnabled(configured&&!permissionPending&&!busy&&!importing);
         profile.setEnabled(hasProfile&&!permissionPending&&!busy&&!importing);autostart.setEnabled(configured&&!importing);
         check.setEnabled(!checking);
+        clockSettings.setEnabled(!busy&&!permissionPending&&!importing);
+    }
+    private void showClockSettings(){
+        if(VpnClientService.busy()||consent.pending())return;
+        final int[] minutes={AppClock.VPN.minutes()};
+        ScrollView scroll=new ScrollView(this);
+        LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(dp(20),dp(8),dp(20),dp(8));page.setBackgroundColor(Color.rgb(18,32,43));scroll.addView(page);
+        text(page,"Сверьте UTC с правильными часами. Если проектор отстаёт на час — нажмите «+1 час», затем «Применить». Стрелки выбирают кнопку, OK нажимает её.",16);
+        TextView preview=text(page,"",18);
+        text(page,"Меняется только время Clean VPN для TLS и авторизации. Системные часы не меняются. Поправка действует до завершения процесса приложения или изменения системных часов; после перезагрузки задайте её снова.",15);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Время VPN · UTC").setView(scroll).create();clockDialog=dialog;
+        Runnable update=()->preview.setText("Устройство: "+deviceTime.format(new java.util.Date())
+            +"\nVPN: "+deviceTime.format(new java.util.Date(System.currentTimeMillis()+minutes[0]*60000L))
+            +"\nПоправка: "+(minutes[0]>=0?"+":"")+minutes[0]+" мин (не более ±24 часов)");
+        Button plus=button(page,"+1 час",()->{minutes[0]=Math.min(VpnClock.MAX_MINUTES,minutes[0]+60);update.run();});
+        button(page,"−1 час",()->{minutes[0]=Math.max(-VpnClock.MAX_MINUTES,minutes[0]-60);update.run();});
+        button(page,"+1 минута",()->{minutes[0]=Math.min(VpnClock.MAX_MINUTES,minutes[0]+1);update.run();});
+        button(page,"−1 минута",()->{minutes[0]=Math.max(-VpnClock.MAX_MINUTES,minutes[0]-1);update.run();});
+        button(page,"Применить",()->{
+            if(VpnClientService.busy()){preview.setText("Сначала отключите VPN");return;}
+            try{AppClock.VPN.setMinutes(minutes[0]);message.setText("Время VPN скорректировано. Теперь нажмите «Подключить».");dialog.dismiss();render();}
+            catch(IllegalArgumentException e){preview.setText("Время вне допустимого диапазона. Проверьте системную дату.");}
+        });
+        button(page,"Использовать системное время без поправки",()->{
+            if(VpnClientService.busy()){preview.setText("Сначала отключите VPN");return;}
+            AppClock.VPN.reset();message.setText("VPN использует системное время.");dialog.dismiss();render();
+        });
+        button(page,"Отмена",dialog::dismiss);
+        Runnable tick=new Runnable(){public void run(){if(dialog.isShowing()){update.run();handler.postDelayed(this,1000);}}};
+        dialog.setOnDismissListener(d->{handler.removeCallbacks(tick);if(clockDialog==dialog)clockDialog=null;});
+        dialog.setOnShowListener(d->{plus.requestFocus();update.run();handler.postDelayed(tick,1000);});
+        dialog.show();
     }
     private void requestConnection(){
         message.setText("Запрос разрешения Android на VPN…");consent.request();render();
@@ -161,6 +199,7 @@ public final class MainActivity extends Activity {
             +"\nLast session error: "+VpnClientService.lastError+"\nTX packets: "+VpnClientService.tx+"; RX packets: "+VpnClientService.rx
             +"\nNative socket protect: accepted="+VpnClientService.socketsProtected.get()+"; refused="+VpnClientService.socketsRefused.get()
             +"\nLast engine TCP connection: "+VpnClientService.lastNativeConnect
+            +"\n"+AppClock.diagnostic()
             +"\nKill switch: absent\n\nConnection checks (TCP only, not TLS authentication):\n"+VpnClientService.connectionChecks
             +"\nCurrent networks:\n"+NetworkDiagnostics.snapshot(this)
             +"\n"+PermissionDiagnostics.snapshot(this)+"\nSession events:\n"+VpnClientService.logs();
@@ -222,5 +261,5 @@ public final class MainActivity extends Activity {
         out.putBoolean("consent_pending",consent.pending());out.putLong("consent_started",consent.started());super.onSaveInstanceState(out);
     }
     @Override protected void onResume(){super.onResume();ConfigStore.prefs(this).registerOnSharedPreferenceChangeListener(settings);loadSummary();handler.removeCallbacks(refresh);handler.post(refresh);}
-    @Override protected void onPause(){ConfigStore.prefs(this).unregisterOnSharedPreferenceChangeListener(settings);handler.removeCallbacks(refresh);super.onPause();}
+    @Override protected void onPause(){if(clockDialog!=null)clockDialog.dismiss();ConfigStore.prefs(this).unregisterOnSharedPreferenceChangeListener(settings);handler.removeCallbacks(refresh);super.onPause();}
 }
