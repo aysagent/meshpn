@@ -210,6 +210,8 @@ safe_prefix_rule() {
   local ts_tag=' --comment (cvpn-native-host-[a-f0-9]{24}) '
   if [[ "$family" == 4 && "$line" =~ $ts_tag ]]; then
     tag="${BASH_REMATCH[1]}"
+    local stale_ts_pattern="^-A OUTPUT ! -s (10\\.99\\.0\\.[0-9]+)/32 -o $tun -m mark --mark 0x80000/0xff0000 -m comment --comment $tag -j REJECT --reject-with icmp-port-unreachable$"
+    if [[ "$base" == OUTPUT && "$line" =~ $stale_ts_pattern ]]; then native_peer_address "${BASH_REMATCH[1]}"; return $?; fi
     [[ "$base" != OUTPUT || "$line" != "-A OUTPUT -d 100.64.0.0/10 -o tailscale0 -m comment --comment $tag -j ACCEPT" ]] || return 0
     if [[ "$base" == FORWARD ]]; then
       [[ "$line" != "-A FORWARD -i tailscale0 -m comment --comment $tag -j DROP" ]] || return 0

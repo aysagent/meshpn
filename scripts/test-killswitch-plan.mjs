@@ -202,6 +202,9 @@ test('tailnet prefix accepts only journalled host egress and forwarding drops',(
  const prefix=`-A OUTPUT -d 100.64.0.0/10 -o tailscale0 -m comment --comment ${tag} -j ACCEPT`;
  const sample=p=>base.replace('-A OUTPUT ',p+'\n-A OUTPUT ');
  assert.equal(audit(4,sample(prefix)).status,0);
+ const stale=`-A OUTPUT ! -s 10.99.0.2/32 -o tun0 -m mark --mark 0x80000/0xff0000 -m comment --comment ${tag} -j REJECT --reject-with icmp-port-unreachable`;
+ assert.equal(audit(4,sample(stale)).status,0);
+ for(const p of [stale.replace('10.99.0.2','10.99.0.1'),stale.replace('tun0','wlan0'),stale.replace('0x80000','0x0'),stale.replace('-j REJECT','-j ACCEPT')])assert.notEqual(audit(4,sample(p)).status,0);
  for(const p of [prefix.replace('tailscale0','wlan0'),prefix.replace('100.64.0.0/10','0.0.0.0/0'),prefix.replace('OUTPUT','FORWARD'),prefix.replace(tag,'foreign'),prefix+' -m mark --mark 0x80000'])
   assert.notEqual(audit(4,sample(p)).status,0);
  for(const direction of ['-i','-o']){

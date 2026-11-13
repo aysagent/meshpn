@@ -77,6 +77,24 @@ try{
     assert.equal(JSON.parse(ip('-j','route','get','100.64.0.2'))[0].dev,'tailscale0');
     assert.equal(JSON.parse(ip('-j','route','get','1.1.1.1','mark','0x80000'))[0].dev,'tun0');
     assert.equal(JSON.parse(ip('-j','route','get',c.exit_ip,'mark','0x80000'))[0].dev,uplink);
+    // A pre-VPN bound socket gets a local rejection, not an invalid packet
+    // inside the tunnel. Real OUTPUT counters distinguish this from timeout.
+    const probe='/run/cvpn-marked-socket';
+    execFileSync('cc',['-x','c','-','-o',probe],{input:`
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+int main(void){
+ int s=socket(AF_INET,SOCK_DGRAM,0),mark=0x80000;
+ struct sockaddr_in src={.sin_family=AF_INET},dst={.sin_family=AF_INET,.sin_port=htons(443)};
+ if(s<0||setsockopt(s,SOL_SOCKET,SO_MARK,&mark,sizeof(mark)))return 2;
+ if(inet_pton(AF_INET,"192.168.1.8",&src.sin_addr)!=1||bind(s,(void*)&src,sizeof(src)))return 3;
+ if(inet_pton(AF_INET,"1.1.1.1",&dst.sin_addr)!=1)return 4;
+ sendto(s,"x",1,0,(void*)&dst,sizeof(dst));close(s);return 0;
+}`,timeout:10000});
+    cmd(probe,[]);
+    const staleRule=cmd('iptables',['-nvx','-L','OUTPUT']).split('\n').find(l=>l.includes('REJECT')&&l.includes('mark match 0x80000/0xff0000'));
+    assert.ok(staleRule&&Number(staleRule.trim().split(/\s+/)[0])>0,'stale Tailscale source rejected in OUTPUT');
     ip('route','add','default','dev','tailscale0','table','52');assert.throws(()=>owner.tick(),/native_tailscale_route/);
     ip('route','del','default','dev','tailscale0','table','52');owner.tick();
     tsPrefs.CorpDNS=true;assert.throws(()=>owner.tick(),/native_tailscale_dns/);tsPrefs.CorpDNS=false;owner.tick();

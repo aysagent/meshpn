@@ -5,7 +5,8 @@ Host profile / установленный `network.json` поддерживае�
 Нужны обновлённые network owner и `scripts/autostart/killswitch.sh`.
 
 Поддерживается Tailscale как участник tailnet для доступа к самой плате.
-Интернет и внешний транспорт Tailscale идут через clean-vpn, поэтому удалённый
+Интернет и публичный внешний транспорт Tailscale идут через clean-vpn (прямой
+обмен с LAN peers сохраняет существующие LAN-исключения guard), поэтому удалённый
 доступ Tailscale не является независимым rescue при отказе clean-vpn.
 USB rescue остаётся независимым. Tailscale exit node, subnet routing,
 advertised routes и AppConnector в этом режиме не поддерживаются.
@@ -35,6 +36,14 @@ clean-vpn и не стираются при остановке VPN.
 USB не получает обход kill switch через tailnet. Восстановление удаляет только
 свои правила. IPv6 public egress остаётся закрыт существующим guard;
 этот режим не добавляет IPv6 exit/subnet routing.
+
+Старые сокеты Tailscale могут сохранить Wi-Fi source IP после появления
+VPN-маршрутов. OUTPUT отклоняет только marked `0x80000/0xff0000` пакеты,
+идущие в `tun0` с source, отличным от назначенного peer IPv4. Приложение
+получает локальный отказ и может повторить подключение; неверный source не
+попадает на exit и не обрывает туннель остальных приложений. Новые сокеты
+выбирают адрес `tun0`. Kernel regression отправляет такой пакет через
+настоящий `SO_MARK` socket и проверяет счётчик REJECT.
 
 Для существующей установки менять network config только при остановленном
 owner и завершённом recovery. Обновить hashes именно изменённых файлов

@@ -31,9 +31,10 @@ test('overlay grants only host OUTPUT; USB/overlay forwarding never gains ACCEPT
  validateNativeHostConfig(c);
  for(const tailscale of [false,'true',{},null])assert.throws(()=>validateNativeHostConfig({...c,tailscale}));
  const rules=nativeHostNatPlan('a'.repeat(24),'10.99.0.2',undefined,c).filter(r=>r.table==='filter');
- assert.equal(rules.length,4);
+ assert.equal(rules.length,5);
  assert.deepEqual(rules.filter(r=>r.spec.at(-1)==='ACCEPT').map(r=>r.chain),['OUTPUT']);
- assert.ok(rules[0].spec.includes('tailscale0')&&rules[0].spec.includes('100.64.0.0/10'));
+ assert.ok(rules[0].spec.includes('0x80000/0xff0000')&&rules[0].spec.includes('10.99.0.2/32')&&rules[0].spec.includes('REJECT'));
+ assert.ok(rules[1].spec.includes('tailscale0')&&rules[1].spec.includes('100.64.0.0/10'));
  assert.ok(rules.filter(r=>r.chain==='FORWARD').every(r=>r.spec.at(-1)==='DROP'));
 });
 test('host installer carries explicit tailnet opt-in into persistent network configuration',()=>{

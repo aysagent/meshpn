@@ -67,6 +67,10 @@ export function nativeHostNatPlan(id, peerAddress = '10.99.0.2', incoming, confi
       table:'mangle',chain:'FORWARD',spec:[...spec,'-p','tcp','-m','tcp','--tcp-flags','SYN,RST','SYN',...tag,'-j','TCPMSS','--set-mss','1360']})),
     {table:'nat',chain:'POSTROUTING',spec:['-s',profile.subnet,'-o','tun0',...tag,'-j','SNAT','--to-source',peerAddress]},
     ...(config.tailscale?[
+      // Sockets opened before the /1 routes retain their physical source IP.
+      // Reject those locally so they retry; never send an unauthorised source
+      // to exit and tear down the authenticated packet session for all apps.
+      {table:'filter',chain:'OUTPUT',spec:['!','-s',peerAddress+'/32','-o','tun0','-m','mark','--mark','0x80000/0xff0000',...tag,'-j','REJECT','--reject-with','icmp-port-unreachable']},
       // OUTPUT only: USB clients never gain a forwarding bypass via tailnet.
       {table:'filter',chain:'OUTPUT',spec:['-o','tailscale0','-d','100.64.0.0/10',...tag,'-j','ACCEPT']},
       {table:'filter',chain:'INPUT',spec:['-s','100.64.0.0/10','!','-i','tailscale0',...tag,'-j','DROP']},
