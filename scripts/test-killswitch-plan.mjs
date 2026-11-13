@@ -196,3 +196,17 @@ test('guard declares native peer DNS support without inspecting host state',()=>
   assert.equal(r.status,0);assert.deepEqual(JSON.parse(r.stdout),{schema:1,native_peer_dns:true,usb_subnet:true,management_mdns:true});
   assert.notEqual(spawnSync('bash',[file,'capabilities','--scope=both'],{encoding:'utf8'}).status,0);
 });
+
+test('tailnet prefix accepts only journalled host egress and forwarding drops',()=>{
+ const tag='cvpn-native-host-'+'a'.repeat(24),base=activeSnapshot(4,true);
+ const prefix=`-A OUTPUT -d 100.64.0.0/10 -o tailscale0 -m comment --comment ${tag} -j ACCEPT`;
+ const sample=p=>base.replace('-A OUTPUT ',p+'\n-A OUTPUT ');
+ assert.equal(audit(4,sample(prefix)).status,0);
+ for(const p of [prefix.replace('tailscale0','wlan0'),prefix.replace('100.64.0.0/10','0.0.0.0/0'),prefix.replace('OUTPUT','FORWARD'),prefix.replace(tag,'foreign'),prefix+' -m mark --mark 0x80000'])
+  assert.notEqual(audit(4,sample(p)).status,0);
+ for(const direction of ['-i','-o']){
+  const drop=`-A FORWARD ${direction} tailscale0 -m comment --comment ${tag} -j DROP`;
+  assert.equal(audit(4,base.replace('-A FORWARD ',drop+'\n-A FORWARD ')).status,0);
+  assert.notEqual(audit(4,base.replace('-A FORWARD ',drop.replace('-j DROP','-j ACCEPT')+'\n-A FORWARD ')).status,0);
+ }
+});

@@ -205,6 +205,17 @@ safe_prefix_rule() {
   IFS=: read -r version scope ipv6 tun servers port subnet <<< "$config"
   subnet="${subnet:-192.168.7.0/24}"
   local usb_address="${subnet%.0/24}.1"
+  # Explicit host-only tailnet exception; no physical egress or forwarding
+  # ACCEPT. Network owner journals/removes these exact rules with the TUN.
+  local ts_tag=' --comment (cvpn-native-host-[a-f0-9]{24}) '
+  if [[ "$family" == 4 && "$line" =~ $ts_tag ]]; then
+    tag="${BASH_REMATCH[1]}"
+    [[ "$base" != OUTPUT || "$line" != "-A OUTPUT -d 100.64.0.0/10 -o tailscale0 -m comment --comment $tag -j ACCEPT" ]] || return 0
+    if [[ "$base" == FORWARD ]]; then
+      [[ "$line" != "-A FORWARD -i tailscale0 -m comment --comment $tag -j DROP" ]] || return 0
+      [[ "$line" != "-A FORWARD -o tailscale0 -m comment --comment $tag -j DROP" ]] || return 0
+    fi
+  fi
   # USB administration may publish one IPv4 mDNS alias. Match the entire
   # rule, never trust a comment, wildcard interface or broad multicast range.
   if [[ "$family" == 4 && "$base" == OUTPUT && "$line" == "-A OUTPUT -s $usb_address/32 -d 224.0.0.251/32 -o usb0 -p udp -m udp --sport 5353 --dport 5353 -m comment --comment meshpn-admin-usb-mdns-v1 -j ACCEPT" ]]; then return 0; fi

@@ -1,14 +1,42 @@
 // Reviewed Radxa IPv4 profile. Control plane only; all payload IO stays native.
 import assert from 'node:assert/strict';
 import { isIPv4 } from 'node:net';
+import { isDeepStrictEqual } from 'node:util';
 import {nativeHostProfile,nativeUplinkInterface} from './native-host-profile.mjs';
 import {validateNativeComboRedirectConfig} from './native-combo-redirect-plan.mjs';
 import {validateTunnelDnsAddress} from './dns-tunnel-plan.mjs';
 import {preferredDefaultRoute} from './vpn-host-routes.mjs';
 
+const baseRules=[{priority:0,src:'all',table:'255'},{priority:32766,src:'all',table:'254'},{priority:32767,src:'all',table:'253'}];
+const tailscaleRules=[
+  {priority:5210,src:'all',fwmark:'0x80000',fwmask:'0xff0000',table:'254'},
+  {priority:5230,src:'all',fwmark:'0x80000',fwmask:'0xff0000',table:'253'},
+  {priority:5250,src:'all',fwmark:'0x80000',fwmask:'0xff0000',action:'7'},
+  {priority:5270,src:'all',table:'52'},
+];
+// Opt-in host-to-tailnet coexistence, not a Tailscale exit/subnet router.
+// Never accept arbitrary policy rules or a default route ahead of our tunnel.
+export function validateNativeTailscalePolicy(rules,routes,prefs,{active=false,peer='10.99.0.2'}={}) {
+  assert.equal(prefs.NetfilterMode,0,'native_tailscale_netfilter');
+  assert.equal(prefs.CorpDNS,false,'native_tailscale_dns');
+  assert.equal(prefs.RouteAll,false,'native_tailscale_subnet_routes');
+  assert.ok(!prefs.ExitNodeID&&!prefs.ExitNodeIP&&!(prefs.AdvertiseRoutes?.length)&&!prefs.AppConnector?.Advertise,'native_tailscale_exit_routes');
+  const dns=active?['1.1.1.1','8.8.8.8'].map((dst,i)=>({priority:10996+i,src:peer,dst,table:'19998'})):[];
+  const expected=[...baseRules,...tailscaleRules,...dns].sort((a,b)=>a.priority-b.priority);
+  // A stopped daemon may have already removed all four of its rules.
+  const without=[...baseRules,...dns].sort((a,b)=>a.priority-b.priority);
+  assert.ok(isDeepStrictEqual(rules,expected)||isDeepStrictEqual(rules,without),'native_foreign_policy');
+  for(const r of routes){
+    const [address,prefix='32']=String(r.dst).split('/'),octets=address.split('.').map(Number);
+    assert.ok(isIPv4(address)&&octets[0]===100&&octets[1]>=64&&octets[1]<=127&&/^\d+$/.test(prefix)&&Number(prefix)>=10&&Number(prefix)<=32,'native_tailscale_route');
+    assert.ok(r.dev==='tailscale0'&&!r.gateway&&!r.nexthops&&(!r.type||r.type==='unicast')&&Object.keys(r).every(k=>['dst','dev','protocol','scope','prefsrc','flags','metric','table','type'].includes(k)),'native_tailscale_route');
+  }
+}
+
 export function validateNativeHostConfig(c) {
   const profile=nativeHostProfile(c);
-  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script', ...('usb_address' in c ? ['usb_address'] : []),...('uplink' in c ? ['uplink'] : []),...('peer_ipv4' in c ? ['peer_ipv4'] : []),...('combo_redirect' in c ? ['combo_redirect'] : []),...('incoming_tcp' in c ? ['incoming_tcp'] : [])].sort());
+  assert.deepEqual(Object.keys(c).sort(), ['version','exit_ip','engine_unit','network_unit','guard_unit','guard_script', ...('usb_address' in c ? ['usb_address'] : []),...('uplink' in c ? ['uplink'] : []),...('peer_ipv4' in c ? ['peer_ipv4'] : []),...('combo_redirect' in c ? ['combo_redirect'] : []),...('incoming_tcp' in c ? ['incoming_tcp'] : []),...('tailscale' in c ? ['tailscale'] : [])].sort());
+  if('tailscale' in c)assert.equal(c.tailscale,true,'native_tailscale_opt_in');
   if('incoming_tcp' in c)validateNativeIncoming(c.incoming_tcp);
   validateTunnelDnsAddress('peer_ipv4' in c ? c.peer_ipv4 : '10.99.0.2');
   if('combo_redirect' in c){const r=validateNativeComboRedirectConfig(c.combo_redirect);assert.equal(r.interface,'usb0');assert.equal(r.subnet,profile.subnet);assert.equal(r.endpoint,c.exit_ip);if(c.incoming_tcp)assert.notEqual(c.incoming_tcp.port,r.listen_port,'native_incoming_relay_port_conflict');}
@@ -38,6 +66,13 @@ export function nativeHostNatPlan(id, peerAddress = '10.99.0.2', incoming, confi
     ...[['-i','usb0','-o','tun0','-s',profile.subnet], ['-i','tun0','-o','usb0','-d',profile.subnet]].map(spec => ({
       table:'mangle',chain:'FORWARD',spec:[...spec,'-p','tcp','-m','tcp','--tcp-flags','SYN,RST','SYN',...tag,'-j','TCPMSS','--set-mss','1360']})),
     {table:'nat',chain:'POSTROUTING',spec:['-s',profile.subnet,'-o','tun0',...tag,'-j','SNAT','--to-source',peerAddress]},
+    ...(config.tailscale?[
+      // OUTPUT only: USB clients never gain a forwarding bypass via tailnet.
+      {table:'filter',chain:'OUTPUT',spec:['-o','tailscale0','-d','100.64.0.0/10',...tag,'-j','ACCEPT']},
+      {table:'filter',chain:'INPUT',spec:['-s','100.64.0.0/10','!','-i','tailscale0',...tag,'-j','DROP']},
+      {table:'filter',chain:'FORWARD',spec:['-i','tailscale0',...tag,'-j','DROP']},
+      {table:'filter',chain:'FORWARD',spec:['-o','tailscale0',...tag,'-j','DROP']},
+    ]:[]),
     // Inserted at position one in this order: closed first, then exact ingress
     // and established replies. No wildcard listener or LAN forwarding grant.
     ...(incoming?[
@@ -58,6 +93,13 @@ export function nativeHostNetwork(c, io) {
   const cmd = (f,a) => run(f,a).trim();
   const ip = (...a) => JSON.parse(cmd('ip',a));
   const prop = (u,k) => cmd('systemctl',['show',u,'-p',k,'--value']);
+  const policy = (active=false) => {
+    const rules=ip('-N','-j','-4','rule','show');
+    if(!c.tailscale){assert.deepEqual(rules,baseRules,'native_foreign_policy');return;}
+    // Query all tables: a not-yet-authenticated daemon may not have table 52.
+    const routes=ip('-N','-j','-4','route','show','table','all').filter(r=>String(r.table)==='52');
+    validateNativeTailscalePolicy(rules,routes,JSON.parse(cmd('/usr/bin/tailscale',['debug','prefs'])),{active,peer:peerAddress});
+  };
   const tun = () => ip('-j','-d','link','show').find(l=>l.ifname==='tun0');
   const ident = l => ({ifindex:l.ifindex,alias:l.ifalias,kind:l.linkinfo?.info_kind});
   const guard = () => {
@@ -108,7 +150,7 @@ export function nativeHostNetwork(c, io) {
       if(requireAll) assert.deepEqual([...lines].sort(),[...allowed].sort(),'native_missing_nat');
     }
     if(requireAll&&c.incoming_tcp){
-      const wanted=plan.filter(o=>o.table==='filter').reverse().map(expected);
+      const wanted=plan.filter(o=>o.table==='filter'&&o.chain==='INPUT').reverse().map(expected);
       const actual=cmd('iptables',['-w','5','-S','INPUT']).split('\n').filter(l=>l.startsWith('-A INPUT ')).slice(0,wanted.length).map(canonical);
       assert.deepEqual(actual,wanted,'native_incoming_rule_order');
     }
@@ -132,7 +174,7 @@ export function nativeHostNetwork(c, io) {
     const usb=ip('-j','address','show','dev','usb0')[0];
     assert.ok(usb?.flags.includes('UP')&&usb.addr_info.some(a=>a.local===profile.address&&a.prefixlen===24),'native_usb_profile_required');
     assert.ok(ip('-j','-4','address','show','dev',uplink().dev)[0]?.flags.includes('UP'),'native_uplink_required');
-    assert.deepEqual(ip('-N','-j','-4','rule','show'),[{priority:0,src:'all',table:'255'},{priority:32766,src:'all',table:'254'},{priority:32767,src:'all',table:'253'}],'native_foreign_policy');
+    policy();
     const binds=prop(c.engine_unit,'BindsTo').split(/\s+/);
     assert.ok(binds.includes(c.network_unit)&&binds.includes(c.guard_unit),'native_engine_dependencies');
     redirect?.assertAvailable();
@@ -190,6 +232,7 @@ export function nativeHostNetwork(c, io) {
       const s=store.read();validate(s);assert.equal(s.stage,'active');
       if(c.combo_redirect)assert.equal(redirect.audit().stage,'active','native_redirect_inactive');
       guard();assert.ok(ownedTun(s),'native_tun_missing');journalScope(s);natAudit(s,true);
+      if(c.tailscale)policy(true);
       const defaults=ip('-j','-4','route','show','default');
       if(defaults.length===0)return {state:'waiting-uplink'};
       const current=uplink(defaults);

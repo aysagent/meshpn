@@ -17,6 +17,17 @@ assert.deepEqual(JSON.parse(ip('-j','link')).map(l=>l.ifname),['lo']);
 let checks=0;const check=(name,fn)=>{fn();console.log('HOST_NETWORK_CHECK '+name);checks++;};
 const cubie=process.env.CVPN_CUBIE_PROFILE==='1',usbAddress=cubie?'192.168.8.1':'192.168.7.1',usbSubnet=cubie?'192.168.8.0/24':'192.168.7.0/24',uplink=cubie?(process.env.CVPN_IPHONE_PROFILE==='1'?'iphone0':'enx123456789012'):'wlan0';
 let c={...(cubie?{usb_address:usbAddress,uplink:'auto'}:{}),version:1,exit_ip:'154.62.226.216',engine_unit:'native-daily.service',network_unit:'native-daily-network.service',guard_unit:'clean-vpn-killswitch.service',guard_script:'/usr/local/bin/clean-vpn-killswitch.sh'};
+const tailnet=process.env.CVPN_TAILSCALE_PROFILE==='1';
+const tsPrefs={NetfilterMode:0,CorpDNS:false,RouteAll:false,ExitNodeIP:'',ExitNodeID:'',AdvertiseRoutes:null};
+if(tailnet){
+ c.tailscale=true;
+ ip('link','add','tailscale0','type','dummy');ip('link','set','tailscale0','up');
+ ip('address','add','100.64.0.1/32','dev','tailscale0');
+ ip('route','add','100.64.0.2/32','dev','tailscale0','table','52');
+ for(const [priority,table] of [['5210','main'],['5230','default']])ip('rule','add','priority',priority,'fwmark','0x80000/0xff0000','lookup',table);
+ ip('rule','add','priority','5250','fwmark','0x80000/0xff0000','unreachable');
+ ip('rule','add','priority','5270','lookup','52');
+}
 ip('link','set','lo','up');
 for(const [dev,address] of [['usb0',usbAddress+'/24'],[uplink,'192.168.1.8/24']]){
   ip('link','add',dev,'type','dummy');ip('addr','add',address,'dev',dev);ip('link','set',dev,'up');
@@ -35,6 +46,7 @@ assert.match(cmd('iptables',['-S','FORWARD']).split('\n')[1],/cvks2-hook -j CLEA
 const before={routes:ip('-N','-j','-4','route','show','table','main'),rp:cmd('sysctl',['-n','net.ipv4.conf.all.rp_filter']),nat:cmd('iptables',['-t','nat','-S']),mangle:cmd('iptables',['-t','mangle','-S']),filter:cmd('iptables',['-S'])};
 let engineAlive=false,active=true,crashAt=null,store,host,dns,redirect,owner,redirectCrash=false;
 const run=(f,a)=>{
+  if(f==='/usr/bin/tailscale'){assert.deepEqual(a,['debug','prefs']);return JSON.stringify(tsPrefs);}
   if(f===c.guard_script)return guard(a);
   if(f==='systemctl'){
     if(a[3]==='MainPID')return engineAlive?'123':'0';
@@ -48,7 +60,7 @@ const open=()=>{
   store=openNativeHostStore();host=openHostRoutes({allowTunLinkDown:true});dns=openTunnelDnsJournal();redirect=openNativeComboRedirectJournal(undefined,{checkpoint:(step)=>{if(redirectCrash&&step==='applied')throw Error('redirect_cut');}});
   const write=store.write;store.write=s=>{write(s);if(crashAt&&crashAt(s))throw Error('simulated_process_boundary');};
   owner=nativeHostNetwork(c,{run,host,dns,redirect,store,scope:nativeHostScope,randomId:()=>crypto.randomUUID().replaceAll('-','').slice(0,24),
-    createTun:(name,alias,peer)=>cmd(root+'native/clean_vpn/build/clean-vpn-tun-helper',[name,alias,peer])});
+    createTun:(name,alias,peer)=>cmd(process.env.CVPN_TEST_TUN_HELPER??root+'native/clean_vpn/build/clean-vpn-tun-helper',[name,alias,peer])});
 };
 const close=()=>{redirect?.release();dns?.release();host?.release();store?.close();};
 const baseline=()=>{
@@ -61,6 +73,14 @@ const baseline=()=>{
 try{
   open();check('preflight leaves routes/firewall untouched',()=>{owner.preflight();baseline();});
   check('prepare creates real persistent TUN, routes, DNS and NAT',()=>{owner.prepare();assert.equal(store.read().stage,'active');owner.tick();assert.equal(JSON.parse(ip('-j','route','get','1.1.1.1'))[0].dev,'tun0');});
+  if(tailnet)check('tailnet routing coexists, marked outer traffic uses VPN, and exit-route drift fails closed',()=>{
+    assert.equal(JSON.parse(ip('-j','route','get','100.64.0.2'))[0].dev,'tailscale0');
+    assert.equal(JSON.parse(ip('-j','route','get','1.1.1.1','mark','0x80000'))[0].dev,'tun0');
+    assert.equal(JSON.parse(ip('-j','route','get',c.exit_ip,'mark','0x80000'))[0].dev,uplink);
+    ip('route','add','default','dev','tailscale0','table','52');assert.throws(()=>owner.tick(),/native_tailscale_route/);
+    ip('route','del','default','dev','tailscale0','table','52');owner.tick();
+    tsPrefs.CorpDNS=true;assert.throws(()=>owner.tick(),/native_tailscale_dns/);tsPrefs.CorpDNS=false;owner.tick();
+  });
   check('default loss waits without tearing down or exhausting restart budget',()=>{
     ip('route','del','default','via','192.168.1.1','dev',uplink);
     for(let i=0;i<8;i++)assert.equal(owner.tick().state,'waiting-uplink');
