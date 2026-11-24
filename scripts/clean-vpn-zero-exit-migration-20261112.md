@@ -132,3 +132,33 @@ exit. После проверок exit healthy, worker count вернулся к
 Для кода `connect` UI теперь явно сообщает «Не удалось соединиться с exit;
 повторная попытка», и в active, и в activating. Неизвестные состояния
 по-прежнему не выдаются за подключённый туннель.
+
+## Возврат Zero на первый exit — 24 ноября 2026
+
+По запросу пользователя Zero снова использует `154.62.226.216:443`, combo-tls,
+packet peer `10.99.0.2`. Старый native combo exit активен; hashes packet и
+relay ключей сверены с разрешёнными identities сервера. Из сохранённого
+комплекта Zero восстановлены её прежние PSK, CA и ограниченный SSH clock key
+с host pin. Текущий engine и Chromium-профиль сохранены.
+
+Согласованно изменены обе ветки combo, network/DNS peer, guard endpoint,
+clock host и inactive combo settings админки. Под operation lock при отсутствии
+pending binary transaction проверены все static bindings; изменён только hash
+guard unit в service.json и его dependency hash в installed.json, плюс hashes
+заменённых конфигурационных файлов. Полного возврата старого installed.json
+и старой админки не было. Recovery oneshot остановлена и запущена заново;
+проверка updater прошла, pending=false.
+
+До изменения сохранены точные текущие файлы в
+`/root/zero-exit-switch-20261124/backup/`; подготовлен rollback.sh и независимый
+10-минутный timer. После успешных проверок создан committed, timer остановлен.
+В начале подготовки owner один раз дождался восстановления Wi-Fi uplink
+после `native_uplink_required`, затем сам перезапустился и подключился.
+
+USB smoke с Mac прошёл 8/8 HTTP(S) запросов, DNS A/AAAA UDP/TCP, download
+1 MiB и upload 256 KiB; внешний IP по HTTP и HTTPS — `154.62.226.216`.
+Native counters: обе ветки передавали данные, packet session_ends=0,
+relay completed=6/failed=0. USB admin HTTP 200, guard IPv4/IPv6 включён,
+network owner enabled. SSH clock probe с прежним pin прошёл,
+needsCorrection=false, часы не изменялись. Серверные службы не перезапускались,
+сеть Mac не менялась. Полной перезагрузки платы в этом прогоне не было.
